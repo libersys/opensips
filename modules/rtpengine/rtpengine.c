@@ -76,6 +76,7 @@
 #include "../../dset.h"
 #include "../../route.h"
 #include "../../modules/tm/tm_load.h"
+#include "../../modules/dialog/dlg_load.h"
 #include "../../lib/cJSON.h"
 #include "rtpengine.h"
 #include "rtpengine_funcs.h"
@@ -146,6 +147,9 @@ enum rtpe_operation {
 	OP_UNBLOCK_MEDIA,
 	OP_BLOCK_DTMF,
 	OP_UNBLOCK_DTMF,
+	OP_START_FORWARD,
+	OP_STOP_FORWARD,
+	OP_PLAY_DTMF,
 };
 
 enum rtpe_stat {
@@ -215,6 +219,9 @@ static const char *command_strings[] = {
 	[OP_UNBLOCK_MEDIA] = "unblock media",
 	[OP_BLOCK_DTMF]= "block DTMF",
 	[OP_UNBLOCK_DTMF] = "unblock DTMF",
+	[OP_START_FORWARD]= "start forward",
+	[OP_STOP_FORWARD] = "stop forward",
+	[OP_PLAY_DTMF]    = "play DTMF",
 };
 
 static const str stat_maps[] = {
@@ -259,6 +266,9 @@ static int rtpengine_blockmedia_f(struct sip_msg* msg, str *flags, pv_spec_t *sp
 static int rtpengine_unblockmedia_f(struct sip_msg* msg, str *flags, pv_spec_t *spvar);
 static int rtpengine_blockdtmf_f(struct sip_msg* msg, str *flags, pv_spec_t *spvar);
 static int rtpengine_unblockdtmf_f(struct sip_msg* msg, str *flags, pv_spec_t *spvar);
+static int rtpengine_start_forward_f(struct sip_msg* msg, str *flags, pv_spec_t *spvar);
+static int rtpengine_stop_forward_f(struct sip_msg* msg, str *flags, pv_spec_t *spvar);
+static int rtpengine_play_dtmf_f(struct sip_msg* msg, str *code, str *flags, pv_spec_t *spvar);
 
 static int parse_flags(struct ng_flags_parse *, struct sip_msg *, enum rtpe_operation *, const char *);
 
@@ -334,75 +344,91 @@ static int_str setid_avp;
 /* tm */
 static struct tm_binds tmb;
 
-static pv_elem_t *extra_id_pv = NULL;
+static struct dlg_binds dlgb;
 
-#define ANY_ROUTE     (REQUEST_ROUTE|ONREPLY_ROUTE|FAILURE_ROUTE|BRANCH_ROUTE|LOCAL_ROUTE)
+static pv_elem_t *extra_id_pv = NULL;
 
 static cmd_export_t cmds[] = {
 	{"rtpengine_use_set", (cmd_function)set_rtpengine_set_f, {
 		{CMD_PARAM_INT, fixup_set_id, fixup_free_set_id}, {0,0,0}},
-		ANY_ROUTE},
+		ALL_ROUTES},
 	{"rtpengine_start_recording", (cmd_function)start_recording_f, {
 		{CMD_PARAM_STR | CMD_PARAM_OPT, 0, 0},
 		{CMD_PARAM_VAR | CMD_PARAM_OPT, 0, 0}, {0,0,0}},
-		ANY_ROUTE},
+		ALL_ROUTES},
 	{"rtpengine_stop_recording", (cmd_function)stop_recording_f, {
 		{CMD_PARAM_STR | CMD_PARAM_OPT, 0, 0},
 		{CMD_PARAM_VAR | CMD_PARAM_OPT, 0, 0}, {0,0,0}},
-		ANY_ROUTE},
+		ALL_ROUTES},
 	{"rtpengine_offer",	(cmd_function)rtpengine_offer_f, {
 		{CMD_PARAM_STR | CMD_PARAM_OPT, 0, 0},
 		{CMD_PARAM_VAR | CMD_PARAM_OPT, 0, 0},
 		{CMD_PARAM_VAR | CMD_PARAM_OPT, 0, 0},
 		{CMD_PARAM_STR | CMD_PARAM_OPT, 0, 0}, {0,0,0}},
-		ANY_ROUTE},
+		ALL_ROUTES},
 	{"rtpengine_answer", (cmd_function)rtpengine_answer_f, {
 		{CMD_PARAM_STR | CMD_PARAM_OPT, 0, 0},
 		{CMD_PARAM_VAR | CMD_PARAM_OPT, 0, 0},
 		{CMD_PARAM_VAR | CMD_PARAM_OPT, 0, 0},
 		{CMD_PARAM_STR | CMD_PARAM_OPT, 0, 0}, {0,0,0}},
-		ANY_ROUTE},
+		ALL_ROUTES},
 	{"rtpengine_manage", (cmd_function)rtpengine_manage_f, {
 		{CMD_PARAM_STR | CMD_PARAM_OPT, 0, 0},
 		{CMD_PARAM_VAR | CMD_PARAM_OPT, 0, 0},
 		{CMD_PARAM_VAR | CMD_PARAM_OPT, 0, 0},
 		{CMD_PARAM_STR | CMD_PARAM_OPT, 0, 0}, {0,0,0}},
-		ANY_ROUTE},
+		ALL_ROUTES},
 	{"rtpengine_delete", (cmd_function)rtpengine_delete_f, {
 		{CMD_PARAM_STR | CMD_PARAM_OPT, 0, 0},
 		{CMD_PARAM_VAR | CMD_PARAM_OPT, 0, 0}, {0,0,0}},
-		ANY_ROUTE},
+		ALL_ROUTES},
 	{"rtpengine_play_media", (cmd_function)rtpengine_playmedia_f, {
 		{CMD_PARAM_STR, 0, 0},
 		{CMD_PARAM_VAR | CMD_PARAM_OPT, 0, 0},
 		{CMD_PARAM_VAR | CMD_PARAM_OPT, 0, 0},
 		{0,0,0}},
-		ANY_ROUTE},
+		ALL_ROUTES},
 	{"rtpengine_stop_media", (cmd_function)rtpengine_stopmedia_f, {
 		{CMD_PARAM_STR | CMD_PARAM_OPT, 0, 0},
 		{CMD_PARAM_VAR | CMD_PARAM_OPT, 0, 0},
 		{0,0,0}},
-		ANY_ROUTE},
+		ALL_ROUTES},
 	{"rtpengine_block_media", (cmd_function)rtpengine_blockmedia_f, {
 		{CMD_PARAM_STR | CMD_PARAM_OPT, 0, 0},
 		{CMD_PARAM_VAR | CMD_PARAM_OPT, 0, 0},
 		{0,0,0}},
-		ANY_ROUTE},
+		ALL_ROUTES},
 	{"rtpengine_unblock_media", (cmd_function)rtpengine_unblockmedia_f, {
 		{CMD_PARAM_STR | CMD_PARAM_OPT, 0, 0},
 		{CMD_PARAM_VAR | CMD_PARAM_OPT, 0, 0},
 		{0,0,0}},
-		ANY_ROUTE},
+		ALL_ROUTES},
 	{"rtpengine_block_dtmf", (cmd_function)rtpengine_blockdtmf_f, {
 		{CMD_PARAM_STR | CMD_PARAM_OPT, 0, 0},
 		{CMD_PARAM_VAR | CMD_PARAM_OPT, 0, 0},
 		{0,0,0}},
-		ANY_ROUTE},
+		ALL_ROUTES},
 	{"rtpengine_unblock_dtmf", (cmd_function)rtpengine_unblockdtmf_f, {
 		{CMD_PARAM_STR | CMD_PARAM_OPT, 0, 0},
 		{CMD_PARAM_VAR | CMD_PARAM_OPT, 0, 0},
 		{0,0,0}},
-		ANY_ROUTE},
+		ALL_ROUTES},
+	{"rtpengine_start_forwarding", (cmd_function)rtpengine_start_forward_f, {
+		{CMD_PARAM_STR | CMD_PARAM_OPT, 0, 0},
+		{CMD_PARAM_VAR | CMD_PARAM_OPT, 0, 0},
+		{0,0,0}},
+		ALL_ROUTES},
+	{"rtpengine_stop_forwarding", (cmd_function)rtpengine_stop_forward_f, {
+		{CMD_PARAM_STR | CMD_PARAM_OPT, 0, 0},
+		{CMD_PARAM_VAR | CMD_PARAM_OPT, 0, 0},
+		{0,0,0}},
+		ALL_ROUTES},
+	{"rtpengine_play_dtmf", (cmd_function)rtpengine_play_dtmf_f, {
+		{CMD_PARAM_STR, 0, 0},
+		{CMD_PARAM_STR | CMD_PARAM_OPT, 0, 0},
+		{CMD_PARAM_VAR | CMD_PARAM_OPT, 0, 0},
+		{0,0,0}},
+		ALL_ROUTES},
 	{0,0,{{0,0,0}},0}
 };
 
@@ -611,7 +637,7 @@ static mi_export_t mi_cmds[] = {
 		{EMPTY_MI_RECIPE}}
 	},
 	{ "teardown", 0, 0, 0, {
-		{mi_teardown_call, {"url", 0}},
+		{mi_teardown_call, {"callid", 0}},
 		{EMPTY_MI_RECIPE}}
 	},
 	{EMPTY_MI_EXPORT}
@@ -620,6 +646,7 @@ static mi_export_t mi_cmds[] = {
 static dep_export_t deps = {
 	{ /* OpenSIPS module dependencies */
 		{ MOD_TYPE_DEFAULT, "tm", DEP_SILENT },
+		{ MOD_TYPE_DEFAULT, "dialog", DEP_SILENT },
 		{ MOD_TYPE_NULL, NULL, 0 },
 	},
 	{ /* modparam dependencies */
@@ -643,6 +670,7 @@ struct module_exports exports = {
 	mod_pvs,     /* exported pseudo-variables */
 	0,			 /* exported transformations */
 	0,           /* extra processes */
+	0,
 	mod_init,
 	0,           /* reply processing */
 	mod_destroy, /* destroy function */
@@ -1080,7 +1108,7 @@ static mi_response_t *mi_show_rtpengines(const mi_params_t *params,
 						crt_rtpe = crt_rtpe->rn_next){
 
 			node_item = add_mi_object(nodes_arr, NULL, 0);
-			if (node_item)
+			if (!node_item)
 				goto error;
 
 			if (add_mi_string(node_item, MI_SSTR("url"),
@@ -1154,8 +1182,18 @@ error:
 static mi_response_t *mi_teardown_call(const mi_params_t *params,
 								struct mi_handler *async_hdl)
 {
-	/* TODO: use 'terminate_dlg' from dialog api or
-	 * find a way to call 'dlg_end_dlg' MI command */
+	str callid;
+
+	if (dlgb.terminate_dlg == NULL)
+		return init_mi_error(500, MI_SSTR("Dialog module not loaded"));
+
+	if (get_mi_string_param(params, "callid", &callid.s, &callid.len) < 0)
+		return init_mi_param_error();
+	if(callid.s == NULL || callid.len ==0)
+		return init_mi_error(400, MI_SSTR("Empty callid"));
+
+	if (dlgb.terminate_dlg(&callid, 0, 0, _str("MI Termination")) < 0)
+		return init_mi_error(500, MI_SSTR("Failed to terminate dialog"));
 
 	return init_mi_result_ok();
 }
@@ -1297,6 +1335,13 @@ mod_init(void)
 		LM_DBG("could not load the TM-functions - answer-offer model"
 				" auto-detection is disabled\n");
 		memset(&tmb, 0, sizeof(struct tm_binds));
+	}
+
+	if (load_dlg_api( &dlgb ) < 0)
+	{
+		LM_DBG("could not load the Dialog functions - 'teardown' MI"
+				" command will not work\n");
+		memset(&dlgb, 0, sizeof(struct dlg_binds));
 	}
 
 	return 0;
@@ -1835,7 +1880,7 @@ error:
 
 
 static bencode_item_t *rtpe_function_call(bencode_buffer_t *bencbuf, struct sip_msg *msg,
-	enum rtpe_operation op, str *flags_str, str *body_in, pv_spec_t *spvar)
+	enum rtpe_operation op, str *flags_str, str *body_in, pv_spec_t *spvar, bencode_item_t *extra_dict)
 {
 	struct ng_flags_parse ng_flags;
 	bencode_item_t *item, *resp;
@@ -1863,11 +1908,14 @@ static bencode_item_t *rtpe_function_call(bencode_buffer_t *bencbuf, struct sip_
 		LM_ERR("can't get From tag\n");
 		return NULL;
 	}
-	if (bencode_buffer_init(bencbuf)) {
-		LM_ERR("could not initialize bencode_buffer_t\n");
-		return NULL;
-	}
-	ng_flags.dict = bencode_dictionary(bencbuf);
+	if (!extra_dict) {
+		if (bencode_buffer_init(bencbuf)) {
+			LM_ERR("could not initialize bencode_buffer_t\n");
+			return NULL;
+		}
+		ng_flags.dict = bencode_dictionary(bencbuf);
+	} else
+		ng_flags.dict = extra_dict;
 
 	if (op == OP_OFFER || op == OP_ANSWER) {
 		ng_flags.flags = bencode_list(bencbuf);
@@ -1876,7 +1924,9 @@ static bencode_item_t *rtpe_function_call(bencode_buffer_t *bencbuf, struct sip_
 		ng_flags.rtcp_mux = bencode_list(bencbuf);
 
 		bencode_dictionary_add_str(ng_flags.dict, "sdp", body_in);
-	}
+	} else if (op == OP_BLOCK_DTMF || op == OP_BLOCK_MEDIA || op == OP_UNBLOCK_DTMF ||
+			op == OP_UNBLOCK_MEDIA || op == OP_START_FORWARD || op == OP_STOP_FORWARD)
+		ng_flags.flags = bencode_list(bencbuf);
 
 	/*** parse flags & build dictionary ***/
 
@@ -2049,7 +2099,7 @@ static int rtpe_function_call_simple(struct sip_msg *msg, enum rtpe_operation op
 	if (set_rtpengine_set_from_avp(msg) == -1)
 		return -1;
 
-	ret = rtpe_function_call(&bencbuf, msg, op, flags_str, NULL, spvar);
+	ret = rtpe_function_call(&bencbuf, msg, op, flags_str, NULL, spvar, NULL);
 	if (!ret)
 		return -1;
 
@@ -2080,7 +2130,7 @@ static bencode_item_t *rtpe_function_call_ok(bencode_buffer_t *bencbuf, struct s
 {
 	bencode_item_t *ret;
 
-	ret = rtpe_function_call(bencbuf, msg, op, flags_str, body, spvar);
+	ret = rtpe_function_call(bencbuf, msg, op, flags_str, body, spvar, NULL);
 	if (!ret)
 		return NULL;
 
@@ -2586,7 +2636,7 @@ rtpengine_offer_answer(struct sip_msg *msg, str *flags,
 			LM_ERR("setting PV failed\n");
 		pkg_free(newbody.s);
 	} else if (!body || (extract_body(msg, &oldbody) > 0)) {
-		/* otherise directly set the body of the message */
+		/* otherwise directly set the body of the message */
 		anchor = del_lump(msg, oldbody.s - msg->buf, oldbody.len, 0);
 		if (!anchor) {
 			LM_ERR("del_lump failed\n");
@@ -3222,19 +3272,7 @@ static int rtpengine_playmedia_f(struct sip_msg* msg, str *flags,
 
 static int rtpengine_stopmedia_f(struct sip_msg* msg, str *flags, pv_spec_t *spvar)
 {
-	bencode_buffer_t bencbuf;
-	bencode_item_t *dict;
-
-	if (set_rtpengine_set_from_avp(msg) == -1)
-		return -1;
-
-	dict = rtpe_function_call_ok(&bencbuf, msg, OP_STOP_MEDIA, flags, NULL, spvar);
-	if (!dict) {
-		LM_ERR("could not stop media!\n");
-		return -1;
-	}
-	bencode_buffer_free(&bencbuf);
-	return 1;
+	return rtpe_function_call_simple(msg, OP_START_MEDIA, flags, spvar);
 }
 
 static int rtpengine_blockmedia_f(struct sip_msg* msg, str *flags, pv_spec_t *spvar)
@@ -3255,4 +3293,38 @@ static int rtpengine_blockdtmf_f(struct sip_msg* msg, str *flags, pv_spec_t *spv
 static int rtpengine_unblockdtmf_f(struct sip_msg* msg, str *flags, pv_spec_t *spvar)
 {
 	return rtpe_function_call_simple(msg, OP_UNBLOCK_DTMF, flags, spvar);
+}
+
+static int rtpengine_start_forward_f(struct sip_msg* msg, str *flags, pv_spec_t *spvar)
+{
+	return rtpe_function_call_simple(msg, OP_START_FORWARD, flags, spvar);
+}
+
+static int rtpengine_stop_forward_f(struct sip_msg* msg, str *flags, pv_spec_t *spvar)
+{
+	return rtpe_function_call_simple(msg, OP_STOP_FORWARD, flags, spvar);
+}
+
+static int rtpengine_play_dtmf_f(struct sip_msg* msg, str *code, str *flags, pv_spec_t *spvar)
+{
+	bencode_buffer_t bencbuf;
+	bencode_item_t *ret, *d_code;
+	int rcode = -1;
+
+	if (bencode_buffer_init(&bencbuf)) {
+		LM_ERR("could not initialize bencode_buffer_t\n");
+		return -2;
+	}
+	d_code = bencode_dictionary(&bencbuf);
+	ret = rtpe_function_call(&bencbuf, msg, OP_PLAY_DTMF, flags, NULL, spvar, d_code);
+	if (!ret)
+		return -2;
+
+	if (bencode_dictionary_get_strcmp(ret, "result", "ok")) {
+		LM_ERR("proxy didn't return \"ok\" result\n");
+	} else
+		rcode = 0;
+
+	bencode_buffer_free(&bencbuf);
+	return rcode;
 }

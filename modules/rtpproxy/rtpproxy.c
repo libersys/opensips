@@ -241,6 +241,22 @@ static str status_name = str_init("status");
 static str status_connected = str_init("active");
 static str status_disconnected = str_init("inactive");
 
+static str rtpproxy_dtmf_event_name = str_init("E_RTPPROXY_DTMF");
+struct rtpproxy_event_params {
+	str name;
+	evi_param_p param;
+};
+
+struct rtpproxy_event_params rtpproxy_event_params[] = {
+	{ /*  0 */ str_init("digit"), NULL },
+	{ /*  1 */ str_init("duration"), NULL },
+	{ /*  2 */str_init("volume"), NULL },
+	{ /*  3 */str_init("id"), NULL },
+	{ /*  4 */str_init("is_callid"), NULL },
+	{ /*  5 */str_init("stream"), NULL },
+};
+evi_params_p rtpproxy_dtmf_params;
+
 static int extract_mediainfo(str *, str *, str *);
 static int alter_mediaip(struct sip_msg *, str *, str *, int, str *, int, int);
 static char *gencookie();
@@ -364,6 +380,7 @@ static db_con_t *db_connection = NULL;
 static db_func_t db_functions;
 
 static event_id_t ei_id = EVI_ERROR;
+static event_id_t rtpproxy_dtmf_event = EVI_ERROR;
 
 rw_lock_t *nh_lock=NULL;
 
@@ -473,7 +490,7 @@ static mi_export_t mi_cmds[] = {
 };
 
 static proc_export_t procs[] = {
-	{"RTPP timeout receiver",  0,  0, timeout_listener_process, 1, 0},
+	{"RTPP notification receiver",  0,  0, notification_listener_process, 1, 0},
 	{0,0,0,0,0,0}
 };
 
@@ -504,6 +521,7 @@ struct module_exports exports = {
 	0,           /* exported pseudo-variables */
 	0,			 /* exported transformations */
 	procs,       /* extra processes */
+	0,
 	mod_init,
 	0,           /* reply processing */
 	mod_destroy, /* destroy function */
@@ -955,7 +973,7 @@ static mi_response_t *mi_show_rtpproxies(const mi_params_t *params,
 						crt_rtpp = crt_rtpp->rn_next){
 
 			node_item = add_mi_object(nodes_arr, NULL, 0);
-			if (node_item)
+			if (!node_item)
 				goto error;
 
 			if (add_mi_string(node_item, MI_SSTR("url"),
@@ -1200,6 +1218,31 @@ mod_init(void)
 		LM_ERR("cannot register event\n");
 
 	rtpp_init_extra_stats();
+
+	rtpproxy_dtmf_event = evi_publish_event(rtpproxy_dtmf_event_name);
+	if (rtpproxy_dtmf_event == EVI_ERROR) {
+		LM_ERR("cannot register RTPProxy DTMF socket\n");
+		return -1;
+	}
+
+	rtpproxy_dtmf_params = pkg_malloc(sizeof(evi_params_t));
+	if (rtpproxy_dtmf_params == NULL) {
+		LM_ERR("no more pkg mem\n");
+		return -1;
+	}
+	memset(rtpproxy_dtmf_params, 0, sizeof(evi_params_t));
+
+	for (i = 0; i < sizeof(rtpproxy_event_params)/
+			sizeof(rtpproxy_event_params[0]); i++) {
+		rtpproxy_event_params[i].param =
+			evi_param_create(rtpproxy_dtmf_params, &rtpproxy_event_params[i].name);
+		if (!rtpproxy_event_params[i].param) {
+			LM_ERR("could not initiate %.*s param!\n",
+					rtpproxy_event_params[i].name.len,
+					rtpproxy_event_params[i].name.s);
+			return -1;
+		}
+	}
 
 	return 0;
 }
@@ -1952,6 +1995,8 @@ rtpp_test(struct rtpp_node *node, int isdisabled, int force)
 		SET_CAP(node, TTL_CHANGE);
 	if (rtpp_checkcap(node, RTP_CAP(RECORD)) > 0)
 		SET_CAP(node, RECORD);
+	if (rtpp_checkcap(node, RTP_CAP(SUBCOMMAND)) > 0)
+		SET_CAP(node, SUBCOMMAND);
 	raise_rtpproxy_event(node, 1);
 	return 0;
 error:
@@ -2388,7 +2433,7 @@ rtpproxy_offer5_f(struct sip_msg *msg, str *param1, str *param2,
 		}
 
 		/* if an initial request - create a new dialog */
-		if(get_to(msg)->tag_value.s == NULL)
+		if(get_to(msg)->tag_value.s == NULL && dlg_api.create_dlg)
 			dlg_api.create_dlg(msg,0);
 	}
 
@@ -2961,7 +3006,7 @@ append_opts_str(struct options *op, str *s)
 }
 
 static void
-free_opts(struct options *op1, struct options *op2, struct options *op3)
+free_opts(struct options *op1, struct options *op2, struct options *op3, struct options *op4)
 {
 
 	if (op1->s.len > 0 && op1->s.s != NULL) {
@@ -2976,11 +3021,15 @@ free_opts(struct options *op1, struct options *op2, struct options *op3)
 		pkg_free(op3->s.s);
 		op3->s.len = 0;
 	}
+	if (op4->s.len > 0 && op4->s.s != NULL) {
+		pkg_free(op4->s.s);
+		op4->s.len = 0;
+	}
 }
 
 #define FORCE_RTP_PROXY_RET(e) \
     do { \
-	free_opts(&opts, &rep_opts, &pt_opts); \
+	free_opts(&opts, &rep_opts, &pt_opts, &mod_opts); \
 	return (e); \
     } while (0);
 
@@ -3155,7 +3204,7 @@ int force_rtp_proxy_body(struct sip_msg* msg, struct force_rtpp_args *args,
 	int create, port, len, asymmetric, flookup, argc, proxied, real;
 	int orgip, commip, enable_notification, keep_body;
 	int pf, pf1, force, err, locked = 0;
-	struct options opts, rep_opts, pt_opts, m_opts, t_opts;
+	struct options opts, rep_opts, pt_opts, m_opts, t_opts, mod_opts;
 	char *cp, *cp1;
 	char  *cpend, *next;
 	char **ap, *argv[10];
@@ -3183,20 +3232,29 @@ int force_rtp_proxy_body(struct sip_msg* msg, struct force_rtpp_args *args,
 		{" ", 1},	/* separator */
 		{NULL, 0},	/* notify socket name */
 		{" ", 1},	/* separator */
-		{NULL, 0}	/* notify tag */
+		{NULL, 0},	/* notify tag */
+		{NULL, 0},	/* (optional) module separator */
+		{NULL, 0},	/* (optional) DTMF tag */
+		{NULL, 0}	/* (optional) module opts */
 	};
 	char *v1p, *v2p, *c1p, *c2p, *m1p, *m2p, *bodylimit, *o1p, *r2p;
 	char medianum_buf[20];
-	char buf[32];
+	char buf[32], dbuf[128];
 	int medianum, media_multi;
 	str medianum_str, tmpstr1;
 	int c1p_altered;
+	int enable_dtmf_catch = 0;
+	int node_has_notification, node_has_dtmf_catch = 0;
 	int vcnt;
 	pv_value_t val;
 	char *adv_address = NULL;
+	struct dlg_cell * dlg;
+	str dtmf_tag = {0, 0}, timeout_tag = {0, 0};
+	str notification_socket = rtpp_notify_socket;
 
 	memset(&opts, '\0', sizeof(opts));
 	memset(&rep_opts, '\0', sizeof(rep_opts));
+	memset(&mod_opts, '\0', sizeof(mod_opts));
 	memset(&pt_opts, '\0', sizeof(pt_opts));
 	memset(&t_opts, '\0', sizeof(t_opts));
 	/* Leave space for U/L prefix TBD later */
@@ -3215,6 +3273,24 @@ int force_rtp_proxy_body(struct sip_msg* msg, struct force_rtpp_args *args,
 			}
 			asymmetric = 1;
 			real = 1;
+			break;
+
+		case 'd':
+		case 'D':
+			enable_dtmf_catch = 1;
+			/* If there are any digits following D, copy them */
+			if (cp[1] == '\0' || !isdigit(cp[1]))
+				break;
+			if (append_opts(&mod_opts, ' ') == -1) {
+				LM_ERR("out of pkg memory\n");
+				FORCE_RTP_PROXY_RET (-1);
+			}
+			for (; cp[1] != '\0' && isdigit(cp[1]); cp++) {
+				if (append_opts(&mod_opts, cp[1]) == -1) {
+					LM_ERR("out of pkg memory\n");
+					FORCE_RTP_PROXY_RET (-1);
+				}
+			}
 			break;
 
 		case 'i':
@@ -3266,6 +3342,13 @@ int force_rtp_proxy_body(struct sip_msg* msg, struct force_rtpp_args *args,
 		case 'n':
 		case 'N':
 			enable_notification = 1;
+			/* check to see if we have a notification socket */
+			if (cp[1] != '\0' && cp[1] == '<') {
+				notification_socket.s = &cp[2];
+				for (; cp[1] != '\0' && cp[1] != '>'; cp++);
+				notification_socket.len = &cp[1] - notification_socket.s;
+				cp++;
+			}
 			break;
 
 		case 'w':
@@ -3404,31 +3487,48 @@ int force_rtp_proxy_body(struct sip_msg* msg, struct force_rtpp_args *args,
 	STR2IOVEC(from_tag, v[12]);
 	STR2IOVEC(to_tag, v[16]);
 
-	if (enable_notification &&
-			(rtpp_notify_socket.s == 0 || rtpp_notify_socket.len == 0)) {
-		LM_DBG("cannot receive timeout notifications because"
-				"rtpp_notify_socket parameter is not specified\n");
+	if (notification_socket.s == 0 || notification_socket.len == 0) {
+		if (enable_notification)
+			LM_WARN("cannot receive notifications because"
+					"notification socket is not specified\n");
 		enable_notification = 0;
+
+		if (enable_dtmf_catch)
+			LM_WARN("cannot receive DMTF notifications because"
+					"notification socket is not specified\n");
+		enable_dtmf_catch = 0;
 	}
 
-	if(enable_notification && opts.s.s[0] == 'U')
-	{
-		struct dlg_cell * dlg;
-		str notify_tag;
-
-		dlg = dlg_api.get_dlg();
-		if(dlg == NULL)
-		{
-			LM_ERR("Failed to get dialog\n");
-			goto error;
+	if (opts.s.s[0] == 'U') {
+		if(enable_notification && dlg_api.get_dlg) {
+			dlg = dlg_api.get_dlg();
+			if(dlg == NULL)
+			{
+				LM_ERR("Failed to get dialog\n");
+				goto error;
+			}
+			/* construct the notify tag from dialog ids */
+			timeout_tag.len= snprintf(buf, 32, "T%llu", dlg_get_did(dlg));
+			timeout_tag.s = buf;
+			LM_DBG("timeout_tag= %s\n", timeout_tag.s);
+		} else if (enable_dtmf_catch) {
+			/* we have dtmf_catch enabled, but we are not interested in
+			 * notifications - add an ignore tag */
+			timeout_tag.s = "I";
+			timeout_tag.len = 1;
 		}
-		/* construct the notify tag from dialog ids */
-		notify_tag.len= sprintf(buf, "%d.%d", dlg->h_entry, dlg->h_id);
-		notify_tag.s = buf;
-		LM_DBG("notify_tag= %s\n", notify_tag.s);
+	} else
+		enable_notification = 0;
 
-		STR2IOVEC(rtpp_notify_socket, v[20]);
-		STR2IOVEC(notify_tag, v[22]);
+	if (enable_dtmf_catch) {
+		if (dlg_api.get_dlg && (dlg = dlg_api.get_dlg())) {
+			LM_DBG("using DTMF dialog %p identifier\n", dlg);
+			dtmf_tag.len = snprintf(dbuf, 128, "d%llu", dlg_get_did(dlg));
+		} else {
+			LM_DBG("using DTMF callid %.*s identifier\n", args->callid.len, args->callid.s);
+			dtmf_tag.len = snprintf(dbuf, 128, "c%.*s", args->callid.len, args->callid.s);
+		}
+		dtmf_tag.s = dbuf;
 	}
 
 	m_opts = opts;
@@ -3599,18 +3699,44 @@ int force_rtp_proxy_body(struct sip_msg* msg, struct force_rtpp_args *args,
 				} else {
 					v[4].iov_len = 0;
 				}
-				if(enable_notification && opts.s.s[0] == 'U' &&
-						HAS_CAP(args->node, NOTIFY)) {
-					vcnt = 23;
-					STR2IOVEC(rtpp_notify_socket, v[20]);
-					if (!HAS_CAP(args->node, NOTIFY_WILD)) {
-						if (!rtpp_notify_socket_un) {
-							v[20].iov_base += 4;
-							v[20].iov_len -= 4;
+				if (to_tag.len == 0) {
+					vcnt = 15;
+					v[17].iov_base = " "; /* replace ';' with ' ' */
+				} else
+					vcnt = 19;
+				node_has_dtmf_catch = enable_dtmf_catch && HAS_CAP(args->node, SUBCOMMAND);
+				node_has_notification = enable_notification && HAS_CAP(args->node, NOTIFY);
+				if (node_has_dtmf_catch || node_has_notification) {
+					if (opts.s.s[0] == 'U') {
+						STR2IOVEC(notification_socket, v[vcnt + 1]);
+						if (!HAS_CAP(args->node, NOTIFY_WILD) && !rtpp_notify_socket_un &&
+								notification_socket.s == rtpp_notify_socket.s) {
+							v[vcnt + 1].iov_base += 4;
+							v[vcnt + 1].iov_len -= 4;
 						}
+						vcnt += 2;
+						STR2IOVEC(timeout_tag, v[vcnt + 1]);
+						vcnt += 2;
 					}
-				} else {
-					vcnt = (to_tag.len > 0) ? 19 : 15;
+
+					if (node_has_dtmf_catch) {
+						if (HAS_CAP(args->node, SUBCOMMAND)) {
+							/* separator */
+							v[vcnt].iov_base = " && M3:1 D";
+							v[vcnt].iov_len = 10;
+							vcnt++;
+							/* DTMF tag */
+							STR2IOVEC(dtmf_tag, v[vcnt]);
+							vcnt++;
+
+							if (mod_opts.oidx > 0) {
+								v[vcnt].iov_base = mod_opts.s.s;
+								v[vcnt].iov_len = mod_opts.oidx;
+								vcnt++;
+							}
+						} else
+							LM_WARN("node does not have subcommand capability!\n");
+					}
 				}
 
 				v[1].iov_base = m_opts.s.s;
@@ -3776,7 +3902,7 @@ int force_rtp_proxy_body(struct sip_msg* msg, struct force_rtpp_args *args,
 			}
 		} /* Iterate medias in session */
 	} /* Iterate sessions */
-	free_opts(&opts, &rep_opts, &pt_opts);
+	free_opts(&opts, &rep_opts, &pt_opts, &mod_opts);
 
 	if (proxied == 0 && nortpproxy_str.len && keep_body == 0) {
 		cp = pkg_malloc((1 + nortpproxy_str.len + CRLF_LEN) * sizeof(char));
@@ -4335,4 +4461,37 @@ int load_rtpproxy(struct rtpproxy_binds *rtpb)
 {
 	rtpb->start_recording = rtpproxy_api_recording;
 	return 1;
+}
+
+#define RTPPROXY_SET_EVENT_PARAM(_type, _param, _value, _idx) \
+	do { \
+		if (evi_param_set_##_type(rtpproxy_event_params[_idx].param, _value) < 0) { \
+			LM_ERR("could not set param %.*s\n", \
+					rtpproxy_event_params[_idx].name.len, \
+					rtpproxy_event_params[_idx].name.s); \
+			goto end; \
+		} \
+	} while (0)
+
+void rtpproxy_raise_dtmf_event(int sender, void *p)
+{
+	struct rtpp_dtmf_event *dtmf = (struct rtpp_dtmf_event *)p;
+	str digit;
+
+	if (evi_probe_event(rtpproxy_dtmf_event)) {
+		digit.s = &dtmf->digit;
+		digit.len = 1;
+		RTPPROXY_SET_EVENT_PARAM(str, rtpproxy_dtmf_params, &digit, 0);
+		RTPPROXY_SET_EVENT_PARAM(int, rtpproxy_dtmf_params, &dtmf->duration, 1);
+		RTPPROXY_SET_EVENT_PARAM(int, rtpproxy_dtmf_params, &dtmf->volume, 2);
+		RTPPROXY_SET_EVENT_PARAM(str, rtpproxy_dtmf_params, &dtmf->id, 3);
+		RTPPROXY_SET_EVENT_PARAM(int, rtpproxy_dtmf_params, &dtmf->is_callid, 4);
+		RTPPROXY_SET_EVENT_PARAM(int, rtpproxy_dtmf_params, &dtmf->stream, 5);
+
+		if (evi_raise_event(rtpproxy_dtmf_event, rtpproxy_dtmf_params) < 0)
+			LM_ERR("cannot raise RTPProxy event\n");
+	} else
+		LM_DBG("nothing to do - nobody is listening!\n");
+end:
+	shm_free(dtmf);
 }

@@ -407,6 +407,7 @@ struct module_exports exports= {
 	mod_items, /* exported pseudo-variables */
 	0,		   /* exported transformations */
 	0,         /* extra processes */
+	0,         /* module pre-initialization function */
 	mod_init,  /* module initialization function */
 	(response_function) reply_received,
 	(destroy_function) tm_shutdown,
@@ -636,6 +637,7 @@ int load_tm( struct tm_binds *tmb)
 	/* reply functions */
 	tmb->t_reply = (treply_f)w_t_reply;
 	tmb->t_reply_with_body = t_reply_with_body;
+	tmb->t_gen_totag = t_gen_totag;
 
 	/* transaction location/status functions */
 	tmb->t_newtran = w_t_newtran;
@@ -663,8 +665,6 @@ int load_tm( struct tm_binds *tmb)
 	tmb->new_auto_dlg_uac = new_auto_dlg_uac;
 	tmb->dlg_add_extra = dlg_add_extra;
 	tmb->dlg_response_uac = dlg_response_uac;
-	tmb->new_dlg_uas = new_dlg_uas;
-	tmb->dlg_request_uas = dlg_request_uas;
 	tmb->free_dlg = free_dlg;
 	tmb->print_dlg = print_dlg;
 	tmb->setlocalTholder = setlocalTholder;
@@ -1454,8 +1454,6 @@ static int w_t_new_request(struct sip_msg* msg, str *method,
 			headers.len, headers.s,
 			body->len, body->s );
 	} else {
-		body->s = NULL;
-		body->len = 0;
 		headers.s = NULL;
 		headers.len = 0;
 	}

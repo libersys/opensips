@@ -32,10 +32,6 @@ children=4
    lookup failures (default disabled) */
 #dns_try_ipv6=yes
 
-/* comment the next line to enable the auto discovery of local aliases
-   based on reverse DNS on IPs */
-auto_aliases=no
-
 
 listen=udp:127.0.0.1:5060   # CUSTOMIZE ME
 ifelse(ENABLE_TCP, `yes', `listen=tcp:127.0.0.1:5060   # CUSTOMIZE ME',`')
@@ -129,7 +125,6 @@ modparam("dialplan", "db_url",
 ',`')
 
 ifelse(USE_HTTP_MANAGEMENT_INTERFACE,`yes',`####  MI_HTTP module
-loadmodule "httpd.so"
 loadmodule "mi_http.so"
 ',`')
 
@@ -160,7 +155,7 @@ route{
 
 	if ( check_source_address( 1, $avp(trunk_attrs)) ) {
 		# request comes from trunks
-		setflag(IS_TRUNK);
+		setflag("IS_TRUNK");
 	} else if ( is_from_gw() ) {
 		# request comes from GWs
 	} else {
@@ -206,7 +201,7 @@ route{
 
 	#### INITIAL REQUESTS
 
-	if ( !isflagset(IS_TRUNK) ) {
+	if ( !isflagset("IS_TRUNK") ) {
 		## accept new calls only from trunks
 		send_reply(403,"Not from trunk");
 		exit;

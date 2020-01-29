@@ -245,7 +245,7 @@ static cmd_export_t cmds[]={
 		ALL_ROUTES},
 	{"get_dialogs_by_profile",(cmd_function)w_get_dlg_jsons_by_profile, {
 		{CMD_PARAM_STR,0,0},
-		{CMD_PARAM_STR,0,0},
+		{CMD_PARAM_STR|CMD_PARAM_OPT,0,0},
 		{CMD_PARAM_VAR,fixup_check_avp,0},
 		{CMD_PARAM_VAR,fixup_check_var,0}, {0,0,0}},
 		ALL_ROUTES},
@@ -481,6 +481,7 @@ struct module_exports exports= {
 	mod_items,       /* exported pseudo-variables */
 	0,			 	 /* exported transformations */
 	0,               /* extra processes */
+	0,               /* module pre-initialization function */
 	mod_init,        /* module initialization function */
 	0,               /* reply processing function */
 	mod_destroy,
@@ -590,8 +591,8 @@ int load_dlg( struct dlg_binds *dlgb )
 	dlgb->set_mod_flag = set_mod_flag_wrapper;
 	dlgb->is_mod_flag_set = is_mod_flag_set_wrapper;
 
-	dlgb->ref_dlg = ref_dlg;
-	dlgb->unref_dlg = unref_dlg_destroy_safe;
+	dlgb->dlg_ref = _ref_dlg;
+	dlgb->dlg_unref = unref_dlg_destroy_safe;
 
 	dlgb->get_rr_param = get_rr_param;
 
@@ -821,7 +822,7 @@ static int mod_init(void)
 			return -1;
 		}
 
-		if (clusterer_api.request_sync(&dlg_repl_cap, dialog_repl_cluster, 0) < 0)
+		if (clusterer_api.request_sync(&dlg_repl_cap, dialog_repl_cluster) < 0)
 			LM_ERR("Sync request failed\n");
 	}
 
@@ -911,10 +912,6 @@ static int mod_init(void)
 
 
 
-static void rpc_load_dlg_db(int sender, void *param)
-{
-	load_dlg_db(dlg_hash_size);
-}
 
 static int child_init(int rank)
 {
@@ -930,10 +927,6 @@ static int child_init(int rank)
 	){
 		if ( dlg_connect_db(&db_url) ) {
 			LM_ERR("failed to connect to database (rank=%d)\n",rank);
-			return -1;
-		}
-		if (rank == 1 && ipc_dispatch_rpc(rpc_load_dlg_db, NULL) < 0) {
-			LM_CRIT("failed to RPC the dialogs loading\n");
 			return -1;
 		}
 	}
@@ -1762,6 +1755,7 @@ int pv_set_dlg_timeout(struct sip_msg *msg, pv_param_t *param,
 static char *dlg_get_json_out(struct dlg_cell *dlg,int ctx,int *out_len)
 {
 	static char dlg_info[DLG_CTX_JSON_BUFF_SIZE];
+	struct dlg_profile_link *dl,*dl2;
 	struct dlg_val* dv;
 	char *p;
 	int i,j,k,len;
@@ -1828,7 +1822,8 @@ static char *dlg_get_json_out(struct dlg_cell *dlg,int ctx,int *out_len)
 		dlg->legs[j].contact.len,dlg->legs[j].contact.s,
 		dlg->legs[j].r_cseq.len,dlg->legs[j].r_cseq.s,
 		dlg->legs[j].route_set.len,dlg->legs[j].route_set.s,
-		dlg->legs[j].bind_addr->sock_str.len,dlg->legs[j].bind_addr->sock_str.s,
+		dlg->legs[j].bind_addr?dlg->legs[j].bind_addr->sock_str.len:0,
+		dlg->legs[j].bind_addr?dlg->legs[j].bind_addr->sock_str.s:NULL,
 		dlg->legs[j].out_sdp.len,dlg->legs[j].out_sdp.s);
 
 		if (i<0) {
@@ -1882,6 +1877,77 @@ next_val:
 		DEC_AND_CHECK_LEN(len,1);
 	}
 
+	if (ctx && dlg->profile_links) {
+		memcpy(p,",\"profiles\":{",13);
+		p+=13;
+		DEC_AND_CHECK_LEN(len,13);
+		for (dl=dlg->profile_links ; dl ; dl=dl->next)
+			dl->it_marker= 0;
+
+		for( dl=dlg->profile_links ; dl ; dl=dl->next) {
+			if (dl->it_marker != 0)
+				continue;
+
+			dl->it_marker=1;
+
+			if (dl!=dlg->profile_links) {
+				*p++ = ','; 
+				DEC_AND_CHECK_LEN(len,1);
+			}
+
+			*p++='\"';
+			DEC_AND_CHECK_LEN(len,1);
+			memcpy(p,dl->profile->name.s,dl->profile->name.len);
+			p+=dl->profile->name.len;
+			DEC_AND_CHECK_LEN(len,dl->profile->name.len);
+
+			*p++='\"';
+			DEC_AND_CHECK_LEN(len,1);
+			*p++=':';	
+			DEC_AND_CHECK_LEN(len,1);
+
+			*p++='[';
+			DEC_AND_CHECK_LEN(len,1);
+
+			*p++='\"';
+			DEC_AND_CHECK_LEN(len,1);
+			memcpy(p,ZSW(dl->value.s),dl->value.len);
+			p+=dl->value.len;
+			DEC_AND_CHECK_LEN(len,dl->value.len);
+			*p++='\"';
+			DEC_AND_CHECK_LEN(len,1);
+
+			for (dl2=dlg->profile_links; dl2; dl2=dl2->next) {
+				if (dl2->it_marker != 0)
+					continue;
+
+				if (dl->profile->name.len == dl2->profile->name.len &&
+				memcmp(dl->profile->name.s,dl2->profile->name.s,dl->profile->name.len) == 0) {
+					/* found another member of the same profile */
+
+					*p++=',';
+					DEC_AND_CHECK_LEN(len,1);
+					*p++='\"';
+					DEC_AND_CHECK_LEN(len,1);
+					
+					memcpy(p,ZSW(dl2->value.s),dl2->value.len);
+					p+=dl2->value.len;
+					DEC_AND_CHECK_LEN(len,dl2->value.len);
+					*p++='\"';
+					DEC_AND_CHECK_LEN(len,1);
+
+					dl2->it_marker=1;
+				}
+			}
+
+			*p++=']';
+			DEC_AND_CHECK_LEN(len,1);
+		}
+
+		*p++='}';
+		DEC_AND_CHECK_LEN(len,1);
+	}
+
 	*p++='}';
 	DEC_AND_CHECK_LEN(len,1);
 
@@ -1901,11 +1967,16 @@ int pv_get_dlg_json(struct sip_msg *msg, pv_param_t *param,
 
 	if ( (dlg=get_current_dialog())==NULL )
 		return pv_get_null( msg, param, res);
+	
+	dlg_lock_dlg(dlg);
 
 	if ((out = dlg_get_json_out(dlg,0,&len)) == NULL) {
 		LM_ERR("Failed to build pvar content \n");
+		dlg_unlock_dlg(dlg);
 		return pv_get_null( msg, param, res);
 	}
+
+	dlg_unlock_dlg(dlg);
 
 	res->rs.s=out;
 	res->rs.len=len;
@@ -1927,10 +1998,15 @@ int pv_get_dlg_ctx_json(struct sip_msg *msg, pv_param_t *param,
 	if ( (dlg=get_current_dialog())==NULL )
 		return pv_get_null( msg, param, res);
 
+	dlg_lock_dlg(dlg);
+
 	if ((out = dlg_get_json_out(dlg,1,&len)) == NULL) {
 		LM_ERR("Failed to build pvar content \n");
+		dlg_unlock_dlg(dlg);
 		return pv_get_null( msg, param, res);
 	}
+
+	dlg_unlock_dlg(dlg);
 
 	res->rs.s=out;
 	res->rs.len=len;
@@ -2048,7 +2124,7 @@ static int w_get_dlg_jsons_by_profile(struct sip_msg *msg, str *attr, str *attr_
 
 			while(cur_link) {
 				if (cur_link->profile == profile &&
-				( attr_val->s == NULL ||
+				( !attr_val || !profile->has_value ||
 				( attr_val->len == cur_link->value.len && 
 				!strncmp(attr_val->s,cur_link->value.s, attr_val->len)))) {
 					found = 1;

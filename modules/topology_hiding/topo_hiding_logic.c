@@ -935,7 +935,13 @@ static int topo_hiding_no_dlg(struct sip_msg *req,struct cell* t,int extra_flags
 
 static int topo_hiding_with_dlg(struct sip_msg *req,struct cell* t,struct dlg_cell* dlg,int extra_flags)
 {
+	int already_engaged = dlg_api.is_mod_flag_set(dlg,TOPOH_ONGOING);
+
 	dlg_api.set_mod_flag(dlg, TOPOH_ONGOING | extra_flags );
+	if (already_engaged) {
+		LM_DBG("topology hiding already engaged!\n");
+		return 1;
+	}
 
 	/* parse all headers to be sure that all RR and Contact hdrs are found */
 	if (parse_headers(req, HDR_EOH_F, 0)< 0) {
@@ -1000,7 +1006,7 @@ void th_loaded_callback(struct dlg_cell *dlg, int type,
 
 static void topo_unref_dialog(void *dialog)
 {
-	dlg_api.unref_dlg((struct dlg_cell*)dialog, 1);
+	dlg_api.dlg_unref((struct dlg_cell*)dialog, 1);
 }
 
 static void topo_dlg_initial_reply (struct dlg_cell* dlg, int type,
@@ -1072,12 +1078,12 @@ static void topo_dlg_onroute (struct dlg_cell* dlg, int type,
 	}
 
 	/* register tm callback for response in  */
-	dlg_api.ref_dlg(dlg,1);
+	dlg_api.dlg_ref(dlg,1);
 	if (tm_api.register_tmcb( req, 0, TMCB_RESPONSE_FWDED,
 	(dir==DLG_DIR_UPSTREAM)?th_down_onreply:th_up_onreply,
 	(void*)dlg, topo_unref_dialog)<0 ) {
 		LM_ERR("failed to register TMCB\n");
-		dlg_api.unref_dlg(dlg,1);
+		dlg_api.dlg_unref(dlg,1);
 		return;
 	}
 
@@ -1246,12 +1252,7 @@ static int dlg_th_encode_callid(struct sip_msg *msg)
 	new_callid.len = word64_enc_len + topo_hiding_prefix.len;
 	new_callid.s = pkg_malloc(new_callid.len);
 	if (new_callid.s==NULL) {
-		LM_ERR("Failed to allocate callid len\n");
-		return -1;
-	}
-
-	if (new_callid.s == NULL) {
-		LM_ERR("Failed to encode callid\n");
+		LM_ERR("Failed to allocate new callid\n");
 		return -1;
 	}
 
@@ -1428,7 +1429,7 @@ int topo_callid_post_raw(str *data, struct sip_msg* foo)
 	msg.buf=data->s;
 	msg.len=data->len;
 	if (dlg_th_callid_pre_parse(&msg,1) < 0) {
-		LM_ERR("could not parse resulted sip message!\n");
+		LM_ERR("could not parse resulted sip message: %.*s\n", data->len, data->s);
 		goto done;
 	}
 

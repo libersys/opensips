@@ -20,10 +20,14 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301,USA
  */
 
+#define _WITH_GETLINE
+
 #include <stdlib.h>
 #include <stdio.h>
 #include <fcntl.h>
 #include <errno.h>
+#include <libgen.h>
+#include <sys/stat.h>
 
 #include "config.h"
 #include "globals.h"
@@ -79,7 +83,7 @@ int parse_opensips_cfg(const char *cfg_file, const char *preproc_cmdline,
 
 	if (flatten_opensips_cfg(cfg_stream,
 				cfg_stream == stdin ? "stdin" : cfg_file, &cfg_buf) < 0) {
-		LM_ERR("failed to expand file imports for %s, oom?\n", cfg_file);
+		LM_ERR("failed to resolve file imports for %s\n", cfg_file);
 		return -1;
 	}
 
@@ -133,23 +137,31 @@ out_free:
 	return -1;
 }
 
-static int extend_cfg_buf(char **buf, int *sz, int *bytes_left)
+static int extend_cfg_buf(char **buf, int *sz, int *bytes_left, int needed)
 {
-	*buf = realloc(*buf, *sz + 4096);
+	if (needed < 4096)
+		needed = 4096;
+
+	*buf = realloc(*buf, *sz + needed);
 	if (!*buf) {
-		LM_ERR("oom\n");
+		LM_ERR("failed to extend cfg buf to %d\n", *sz + needed);
 		return -1;
 	}
 
-	*sz += 4096;
-	*bytes_left += 4096;
+	*sz += needed;
+	*bytes_left += needed;
 	return 0;
 }
 
 /* search for '(include|import)_file "filepath"' patterns */
-int extract_included_file(char *line, int line_len, char **out_path)
+int mk_included_file_path(char *line, int line_len, const char *current_dir,
+                          char **out_path)
 {
+	#define MAX_INCLUDE_FNAME   256
+	static char full_path[MAX_INCLUDE_FNAME];
+	struct stat _;
 	char *p = NULL, enclose = 0;
+	int len1, len2, fplen;
 
 	if (line_len > include_v1.len &&
 	        !memcmp(line, include_v1.s, include_v1.len)) {
@@ -162,7 +174,7 @@ int extract_included_file(char *line, int line_len, char **out_path)
 	}
 
 	if (!p)
-		return -1;
+		return 1;
 
 	while (line_len > 0 && isspace(*p)) {
 		line_len--;
@@ -189,19 +201,108 @@ int extract_included_file(char *line, int line_len, char **out_path)
 		return -1;
 
 	*p = '\0';
+
+	/* is it a relative-path import? */
+	if (**out_path != '/' && stat(*out_path, &_) < 0) {
+		LM_DBG("%s not found (%d, %s), assuming it's relative to source cfg\n",
+		       *out_path, errno, strerror(errno));
+
+		/* this relative path is not inside the startup dir,
+		 * so maybe it's relative to the importing file */
+		len1 = strlen(current_dir);
+		len2 = strlen(*out_path);
+
+		if (len1 + 1 + len2 + 1 > MAX_INCLUDE_FNAME) {
+			LM_ERR("file path too long (max %d): '%s' + '%s'\n",
+			       MAX_INCLUDE_FNAME, current_dir, *out_path);
+			return -1;
+		}
+
+		memcpy(full_path, current_dir, len1);
+		fplen = len1;
+
+		/* this test can only fail when opensips runs from '/' */
+		if (current_dir[len1 - 1] != '/')
+			full_path[fplen++] = '/';
+
+		memcpy(full_path + fplen, *out_path, len2);
+		fplen += len2;
+
+		full_path[fplen] = '\0';
+		*out_path = full_path;
+	}
+
+	LM_DBG("preparing to include %s\n", *out_path);
 	return 0;
 }
 
+static struct cfg_context {
+	const char *path;
+	const char *dirname; /* useful for relative path includes */
+	int loc;
+	char **lines;
+	int bufsz;
+	struct cfg_context *next;
+} *__ccon;
+
+static struct cfg_context *cfg_context_new_file(const char *path)
+{
+	struct cfg_context *con, *it;
+	char *cpy;
+
+	for (it = __ccon; it; it = it->next)
+		if (!strcmp(it->path, path))
+			return it;
+
+	con = malloc(sizeof *con);
+	memset(con, 0, sizeof *con);
+
+	con->path = strdup(path);
+
+	cpy = strdup(path);
+	con->dirname = strdup(dirname(cpy));
+	free(cpy);
+
+	con->lines = malloc(32 * sizeof *con->lines);
+	con->bufsz = 32;
+
+	add_last(con, __ccon);
+	return con;
+}
+
+static void cfg_context_append_line(struct cfg_context *con,
+                                    char *line, int len)
+{
+	if (con->loc == con->bufsz) {
+		con->bufsz *= 2;
+		con->lines = realloc(con->lines, con->bufsz * sizeof *con->lines);
+		if (!con->lines)
+			return;
+	}
+
+	con->lines[con->loc] = malloc(len + 1);
+	memcpy(con->lines[con->loc], line, len);
+	con->lines[con->loc][len] = '\0';
+
+	con->loc++;
+}
+
 static int __flatten_opensips_cfg(FILE *cfg, const char *cfg_path,
-                                  char **flattened, int *sz, int *bytes_left)
+                        char **flattened, int *sz, int *bytes_left, int reclev)
 {
 	FILE *included_cfg;
 	ssize_t line_len;
 	char *line = NULL, *included_cfg_path;
 	unsigned long line_buf_sz = 0;
 	int cfg_path_len = strlen(cfg_path);
-	int line_counter = 1, printed;
+	int line_counter = 1, needed, printed;
 	struct cfg_context *con = NULL;
+
+	if (reclev > 50) {
+		LM_ERR("Maximum import depth reached (50) or "
+		       "you have an infinite include_file loop!\n");
+		goto out_err;
+	}
 
 	if (cfg_path_len >= 2048) {
 		LM_ERR("file path too large: %.*s...\n", 2048, cfg_path);
@@ -209,17 +310,18 @@ static int __flatten_opensips_cfg(FILE *cfg, const char *cfg_path,
 	}
 
 	con = cfg_context_new_file(cfg_path);
-	if (*bytes_left < cfgtok_filebegin.len + 1 + 1+cfg_path_len+1 + 1) {
-		if (extend_cfg_buf(flattened, sz, bytes_left) < 0) {
+	needed = cfgtok_filebegin.len + 1 + 1+cfg_path_len+1 + 1 + 1;
+	if (*bytes_left < needed) {
+		if (extend_cfg_buf(flattened, sz, bytes_left, needed) < 0) {
 			LM_ERR("oom\n");
 			goto out_err;
 		}
 	}
 
 	/* print "start of file" adnotation */
-	snprintf(*flattened + *sz - *bytes_left, *bytes_left, "%.*s \"%.*s\"\n",
+	printed = snprintf(*flattened + *sz - *bytes_left, *bytes_left, "%.*s \"%.*s\"\n",
 	        cfgtok_filebegin.len, cfgtok_filebegin.s, cfg_path_len, cfg_path);
-	*bytes_left -= cfgtok_filebegin.len + 1 +1+cfg_path_len+1 + 1;
+	*bytes_left -= printed;
 
 	for (;;) {
 		line_len = getline(&line, (size_t*)&line_buf_sz, cfg);
@@ -261,8 +363,9 @@ static int __flatten_opensips_cfg(FILE *cfg, const char *cfg_path,
 		}
 
 		/* finally... we have a line! print "line number" adnotation */
-		if (*bytes_left < cfgtok_line.len + 1 + 10) {
-			if (extend_cfg_buf(flattened, sz, bytes_left) < 0) {
+		needed = cfgtok_line.len + 1 + 10 + 1 + 1;
+		if (*bytes_left < needed) {
+			if (extend_cfg_buf(flattened, sz, bytes_left, needed) < 0) {
 				LM_ERR("oom\n");
 				goto out_err;
 			}
@@ -277,7 +380,7 @@ static int __flatten_opensips_cfg(FILE *cfg, const char *cfg_path,
 			cfg_context_append_line(con, line, line_len);
 
 		/* if it's an include, skip printing the line, but do print the file */
-		if (extract_included_file(line, line_len, &included_cfg_path) == 0) {
+		if (mk_included_file_path(line, line_len, con->dirname, &included_cfg_path) == 0) {
 			included_cfg = fopen(included_cfg_path, "r");
 			if (!included_cfg) {
 				LM_ERR("failed to open %s: %d (%s)\n", included_cfg_path,
@@ -285,14 +388,18 @@ static int __flatten_opensips_cfg(FILE *cfg, const char *cfg_path,
 				goto out_err;
 			}
 
+			included_cfg_path = strdup(included_cfg_path);
 			if (__flatten_opensips_cfg(included_cfg, included_cfg_path,
-			                           flattened, sz, bytes_left)) {
-				LM_ERR("failed to flatten cfg file (internal err), oom?\n");
+			                           flattened, sz, bytes_left, reclev + 1)) {
+				free(included_cfg_path);
+				LM_ERR("failed to flatten cfg file %s\n", cfg_path);
 				goto out_err;
 			}
+			free(included_cfg_path);
 		} else {
-			if (*bytes_left < line_len) {
-				if (extend_cfg_buf(flattened, sz, bytes_left) < 0) {
+			needed = line_len + 1;
+			if (*bytes_left < needed) {
+				if (extend_cfg_buf(flattened, sz, bytes_left, needed) < 0) {
 					LM_ERR("oom\n");
 					goto out_err;
 				}
@@ -306,17 +413,18 @@ static int __flatten_opensips_cfg(FILE *cfg, const char *cfg_path,
 
 	free(line);
 
-	if (*bytes_left < cfgtok_fileend.len + 1) {
-		if (extend_cfg_buf(flattened, sz, bytes_left) < 0) {
+	needed = cfgtok_fileend.len + 1 + 1;
+	if (*bytes_left < needed) {
+		if (extend_cfg_buf(flattened, sz, bytes_left, needed) < 0) {
 			LM_ERR("oom\n");
 			goto out_err;
 		}
 	}
 
 	/* print "end of file" adnotation */
-	snprintf(*flattened + *sz - *bytes_left, *bytes_left, "%.*s\n",
+	printed = snprintf(*flattened + *sz - *bytes_left, *bytes_left, "%.*s\n",
 	        cfgtok_fileend.len, cfgtok_fileend.s);
-	*bytes_left -= cfgtok_fileend.len + 1;
+	*bytes_left -= printed;
 
 	fclose(cfg);
 	return 0;
@@ -336,15 +444,22 @@ static int flatten_opensips_cfg(FILE *cfg, const char *cfg_path, str *out)
 	int sz = 0, bytes_left = 0;
 	char *flattened = NULL;
 
-	if (__flatten_opensips_cfg(cfg, cfg_path, &flattened, &sz, &bytes_left)) {
-		LM_ERR("failed to flatten cfg file (internal err), out of memory?\n");
+	if (__flatten_opensips_cfg(cfg, cfg_path, &flattened, &sz, &bytes_left, 0)) {
+		LM_ERR("failed to flatten cfg file %s\n", cfg_path);
 		return -1;
 	}
 
-	//LM_INFO("flattened config file:\n%.*s\n", sz - bytes_left, flattened);
-
 	out->s = flattened;
 	out->len = sz - bytes_left;
+
+	if (strlen(out->s) != out->len) {
+		LM_BUG("preprocessed buffer check failed (%lu vs. %d)",
+		       strlen(out->s), out->len);
+		LM_ERR("either this is a bug or your script contains '\\0' chars, "
+		        "which are obviously NOT allowed!\n");
+		return -1;
+	}
+
 	return 0;
 }
 
@@ -395,48 +510,6 @@ int cfg_pop(void)
 	}
 
 	return 0;
-}
-
-static struct cfg_context {
-	const char *path;
-	int loc;
-	char **lines;
-	int bufsz;
-	struct cfg_context *next;
-} *__ccon;
-
-static struct cfg_context *cfg_context_new_file(const char *path)
-{
-	struct cfg_context *con, *it;
-
-	for (it = __ccon; it; it = it->next)
-		if (!strcmp(it->path, path))
-			return NULL;
-
-	con = malloc(sizeof *con);
-	memset(con, 0, sizeof *con);
-
-	con->path = strdup(path);
-	con->lines = malloc(32 * sizeof *con->lines);
-	con->bufsz = 32;
-
-	add_last(con, __ccon);
-	return con;
-}
-
-static void cfg_context_append_line(struct cfg_context *con,
-                                    char *line, int len)
-{
-	if (con->loc == con->bufsz) {
-		con->bufsz *= 2;
-		con->lines = realloc(con->lines, con->bufsz * sizeof *con->lines);
-	}
-
-	con->lines[con->loc] = malloc(len + 1);
-	memcpy(con->lines[con->loc], line, len);
-	con->lines[con->loc][len] = '\0';
-
-	con->loc++;
 }
 
 void cfg_dump_context(const char *file, int line, int colstart, int colend)

@@ -37,6 +37,7 @@
 #include "../../parser/parse_methods.h"
 #include "../tm/dlg.h"
 #include "../tm/tm_load.h"
+#include "../../ipc.h"
 #include "dlg_hash.h"
 #include "dlg_req_within.h"
 #include "dlg_db_handler.h"
@@ -158,7 +159,8 @@ dlg_t * build_dialog_info(struct dlg_cell * cell, int dst_leg, int src_leg,char 
 	} else
 		cell->legs[dst_leg].last_gen_cseq++;
 
-	*reply_marker = DLG_PING_PENDING;
+	if (reply_marker)
+		*reply_marker = DLG_PING_PENDING;
 
 	td->loc_seq.value = cell->legs[dst_leg].last_gen_cseq -1;
 
@@ -221,8 +223,8 @@ static void dual_bye_event(struct dlg_cell* dlg, struct sip_msg *req,
 			dlg->h_entry, dlg->h_id);
 
 		/*destroy linkers */
-		destroy_linkers(dlg, 0);
-		remove_dlg_prof_table(dlg,0);
+		destroy_linkers(dlg);
+		remove_dlg_prof_table(dlg,is_active);
 
 		/* remove from timer */
 		ret = remove_dlg_timer(&dlg->tl);
@@ -409,20 +411,56 @@ err:
 	return -1;
 }
 
+struct dlg_end_params {
+	struct dlg_cell *dlg;
+	str hdrs;
+};
+
+static int dlg_send_dual_bye(struct dlg_cell *dlg, str *headers)
+{
+	int i,res = 0;
+	int callee;
+
+	callee = callee_idx(dlg);
+	if (send_leg_bye(dlg, DLG_CALLER_LEG, callee, headers)!=0) {
+		res--;
+	}
+	if (send_leg_bye(dlg, callee, DLG_CALLER_LEG, headers)!=0 ) {
+		res--;
+	}
+
+	for(i=res ; i<0 ; i++)
+		dual_bye_event(dlg, NULL, 1);
+
+	return res;
+}
+
+static void dlg_end_rpc(int sender, void *param)
+{
+	struct dlg_end_params *params = (struct dlg_end_params *)param;
+	dlg_send_dual_bye(params->dlg, &params->hdrs);
+	unref_dlg(params->dlg, 1);
+	shm_free(params);
+}
 
 /* sends BYE in both directions
  * returns 0 if both BYEs were successful
  */
 int dlg_end_dlg(struct dlg_cell *dlg, str *extra_hdrs, int send_byes)
 {
+	struct dlg_end_params *params;
 	str str_hdr = {NULL,0};
 	struct cell* t;
-	int i,res = 0;
-	int callee;
+	int res = -1;
+
+	if (!send_byes) {
+		dual_bye_event(dlg, NULL, 0);
+		dual_bye_event(dlg, NULL, 0);
+		return 0;
+	}
 
 	/* lookup_dlg has incremented the reference count !! */
-	if (send_byes &&
-		(dlg->state == DLG_STATE_UNCONFIRMED || dlg->state == DLG_STATE_EARLY)) {
+	if ((dlg->state == DLG_STATE_UNCONFIRMED || dlg->state == DLG_STATE_EARLY)) {
 		/* locate initial transaction */
 		LM_DBG("trying to find transaction with hash_index = %u and label = %u\n",
 				dlg->initial_t_hash_index,dlg->initial_t_label);
@@ -442,26 +480,32 @@ int dlg_end_dlg(struct dlg_cell *dlg, str *extra_hdrs, int send_byes)
 		return 0;
 	}
 
-	if (send_byes && (build_extra_hdr(dlg, extra_hdrs, &str_hdr)) != 0){
+	if (build_extra_hdr(dlg, extra_hdrs, &str_hdr) != 0) {
 		LM_ERR("failed to create extra headers\n");
 		return -1;
 	}
 
-	callee = callee_idx(dlg);
-	if (send_byes && send_leg_bye(dlg, DLG_CALLER_LEG, callee, &str_hdr)!=0) {
-		res--;
-	}
-	if (send_byes && send_leg_bye(dlg, callee, DLG_CALLER_LEG, &str_hdr)!=0 ) {
-		res--;
-	}
+	if (!sroutes) {
+		params = shm_malloc(sizeof(struct dlg_end_params) + str_hdr.len);
+		if (!params) {
+			LM_ERR("could not create dlg end params!\n");
+			goto end;
+		}
+		params->hdrs.s = (char *)(params + 1);
+		params->hdrs.len = str_hdr.len;
+		memcpy(params->hdrs.s, str_hdr.s, str_hdr.len);
+		ref_dlg(dlg, 1);
+		params->dlg = dlg;
 
-	if (!send_byes) {
-		dual_bye_event(dlg, NULL, 0);
-		dual_bye_event(dlg, NULL, 0);
+		if (ipc_dispatch_rpc(dlg_end_rpc, params) < 0) {
+			LM_ERR("could not dispatch dlg end job!\n");
+			goto end;
+		}
+		res = 0;
 	} else
-		for(i=res ; i<0 ; i++)
-			dual_bye_event(dlg, NULL, 1);
+		res = dlg_send_dual_bye(dlg, &str_hdr);
 
+end:
 	if (str_hdr.s)
 		pkg_free(str_hdr.s);
 
@@ -498,9 +542,7 @@ mi_response_t *mi_terminate_dlg(const mi_params_t *params, str *extra_hdrs)
 	dialog_id.s[dialog_id.len] = bkp;
 	if (end-dialog_id.s==dialog_id.len) {
 		/* the ID is numeric, so let's consider it DID */
-		h_entry = (unsigned int)(d_id>>(8*sizeof(int)));
-		h_id = (unsigned int)(d_id &
-			(((unsigned long long)1<<(8*sizeof(int)))-1) );
+		dlg_parse_did(d_id, h_entry, h_id);
 		LM_DBG("ID: %llu (h_entry %u h_id %u)\n", d_id, h_entry, h_id);
 		dlg = lookup_dlg(h_entry, h_id);
 	} else {
@@ -557,7 +599,7 @@ mi_response_t *mi_terminate_dlg_2(const mi_params_t *params,
 
 int send_leg_msg(struct dlg_cell *dlg,str *method,int src_leg,int dst_leg,
 	str *hdrs,str *body,dlg_request_callback func,
-	void *param,dlg_release_func release,char *reply_marker)
+	void *param,dlg_release_func release,char *reply_marker, int no_ack)
 {
 	context_p old_ctx;
 	context_p *new_ctx;
@@ -594,7 +636,8 @@ int send_leg_msg(struct dlg_cell *dlg,str *method,int src_leg,int dst_leg,
 	if (push_new_processing_context( dlg, &old_ctx, &new_ctx, NULL)!=0)
 		return -1;
 
-	//dialog_info->T_flags=T_NO_AUTOACK_FLAG;
+	if (no_ack)
+		dialog_info->T_flags=T_NO_AUTOACK_FLAG;
 
 	result = d_tmb.t_request_within
 		(method,         /* method*/
@@ -642,8 +685,6 @@ struct dlg_sequential_param {
 	struct dlg_cell *dlg;
 	struct mi_handler *async;
 };
-
-#define other_leg(dlg, l) (l == DLG_CALLER_LEG? callee_idx(dlg): DLG_CALLER_LEG)
 
 void dlg_sequential_free(void *params)
 {
@@ -705,7 +746,8 @@ static void dlg_sequential_reply(struct cell* t, int type, struct tmcb_params* p
 	p = (struct dlg_sequential_param *)(*ps->param);
 	dlg = p->dlg;
 
-	if (dlg_handle_seq_reply(dlg, rpl, statuscode, p->leg) < 0) {
+	if (dlg_handle_seq_reply(dlg, rpl, statuscode, p->leg,
+	                         dlg_has_reinvite_pinging(dlg)) < 0) {
 		LM_ERR("Bad reply %d for callid %.*s\n",
 				statuscode, dlg->callid.len,dlg->callid.s);
 		dlg_async_response(p, rpl, statuscode);
@@ -756,7 +798,7 @@ static void dlg_sequential_reply(struct cell* t, int type, struct tmcb_params* p
 	if (send_leg_msg(dlg, &p->method, other_leg(dlg, p->leg), p->leg,
 			&extra_headers, &body,
 			dlg_sequential_reply, p, dlg_sequential_free,
-			&dlg->legs[p->leg].reply_received) < 0) {
+			&dlg->legs[p->leg].reply_received, 0) < 0) {
 		LM_ERR("cannot send sequential message!\n");
 		goto error;
 	}
@@ -796,7 +838,7 @@ static mi_response_t *mi_send_sequential(struct dlg_cell *dlg, int sleg,
 
 	if (send_leg_msg(dlg, method, sleg, dleg, &extra_headers, body,
 			dlg_sequential_reply, param, dlg_sequential_free,
-			&dlg->legs[dleg].reply_received) < 0) {
+			&dlg->legs[dleg].reply_received, 0) < 0) {
 		pkg_free(extra_headers.s);
 		dlg_sequential_free(param);
 		LM_ERR("cannot send sequential message!\n");
@@ -842,7 +884,7 @@ static int mi_parse_mode(const mi_params_t *params, int *src_leg, int *challenge
 		}
 		/* 10 because we skip the separator, whatever that is */
 		mode_s.s += 10;
-		mode_s.len += 10;
+		mode_s.len -= 10;
 	}
 	if (mode_s.len != 6) {
 		LM_WARN("Invalid leg specified '%.*s'\n", mode_s.len, mode_s.s);

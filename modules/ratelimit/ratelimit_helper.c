@@ -56,7 +56,7 @@ static rl_algo_t get_rl_algo(str);
 rl_big_htable rl_htable;
 
 /* feedback algorithm */
-static int *rl_feedback_limit;
+int *rl_feedback_limit;
 
 static cachedb_funcs cdbf;
 static cachedb_con *cdbc = 0;
@@ -594,7 +594,8 @@ int rl_stats(mi_item_t *resp_obj, str * value)
 		pipe = RL_FIND_PIPE(i, *value);
 		if (!pipe || !*pipe) {
 			LM_DBG("pipe %.*s not found\n", value->len, value->s);
-			goto error;
+			RL_RELEASE_LOCK(i);
+			return 1;
 		}
 		pipe_item = add_mi_object(resp_obj, MI_SSTR("Pipe"));
 		if (!pipe_item)
@@ -611,6 +612,8 @@ int rl_stats(mi_item_t *resp_obj, str * value)
 		if (!pipe_arr)
 			return -1;
 		for (i = 0; i < rl_htable.size; i++) {
+			if (map_size(rl_htable.maps[i]) == 0)
+				continue;
 			pipe_item = add_mi_object(pipe_arr, NULL, 0);
 			if (!pipe_item)
 				return -1;

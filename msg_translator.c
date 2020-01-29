@@ -394,6 +394,16 @@ static inline int lump_check_opt(	struct lump *l,
 			}
 			l->flags |= LUMPFLAG_COND_TRUE;
 			return 1;
+		case COND_IF_SAME_REALMS:
+			get_ip_port_proto;
+			/* faster tests first */
+			if ((port!=snd_s->port_no)||(proto!=snd_s->proto)||
+				(!ip_addr_cmp(ip, &snd_s->address))) {
+				l->flags &= ~LUMPFLAG_COND_TRUE;
+				return 0;
+			}
+			l->flags |= LUMPFLAG_COND_TRUE;
+			return 1;
 		case COND_IF_DIFF_AF:
 			get_ip_port_proto;
 			if (ip->af==snd_s->address.af) {
@@ -2839,7 +2849,7 @@ char *construct_uri(str *protocol,str *username,str *domain,str *port,
 {
 	int pos = 0;
 
-	if (!protocol || !username || !domain || !port || !params || !len)
+	if (!len)
 	{
 		LM_ERR("null pointer provided for construct_uri \n");
 		return 0;
@@ -2861,7 +2871,7 @@ char *construct_uri(str *protocol,str *username,str *domain,str *port,
 	pos += protocol->len;
 	uri_buff[pos++] = ':';
 
-	if (username->s && username->len != 0)
+	if (username && username->s && username->len != 0)
 	{
 		memcpy(uri_buff+pos,username->s,username->len);
 		pos += username->len;
@@ -2871,14 +2881,14 @@ char *construct_uri(str *protocol,str *username,str *domain,str *port,
 	memcpy(uri_buff+pos,domain->s,domain->len);
 	pos += domain->len;
 
-	if (port->s && port->len !=0)
+	if (port && port->s && port->len !=0)
 	{
 		uri_buff[pos++] = ':';
 		memcpy(uri_buff+pos,port->s,port->len);
 		pos += port->len;
 	}
 
-	if (params->s && params->len !=0 )
+	if (params && params->s && params->len !=0 )
 	{
 		uri_buff[pos++] = ';';
 		memcpy(uri_buff+pos,params->s,params->len);

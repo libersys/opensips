@@ -538,6 +538,147 @@ error:
 	return -1;
 }
 
+/* clones the headers list from the `from` sip_msg
+ * into the `to` sip_msg structure */
+int clone_headers(struct sip_msg *from_msg, struct sip_msg *to_msg)
+{
+	int hdrs_no, i;
+	struct hdr_field *hdrs;
+	struct hdr_field *hdr;
+	struct hdr_field *itr;
+
+#define link_sibling_hdr_case(_hook, _hdr_type) \
+	case _hdr_type: \
+		if (to_msg->_hook==0) to_msg->_hook=&hdrs[i];\
+		else {\
+			for(itr=to_msg->_hook;itr->sibling;itr=itr->sibling);\
+			itr->sibling = &hdrs[i];\
+		}\
+		break
+#define link_hdr_case(_hook, _hdr_type) \
+	case _hdr_type: \
+		to_msg->_hook=&hdrs[i];\
+		break
+
+	 /*
+	 * we need to duplicate the headers because the hdr->parsed field resides
+	 * in shm memory, so there might be a different process that access the
+	 * parsed field and find the structure parsed by the current process in
+	 * pkg
+	 */
+	for (hdrs_no = 0, hdr = from_msg->headers; hdr; hdr = hdr->next)
+		hdrs_no++;
+
+	hdrs = pkg_malloc(hdrs_no * sizeof(struct hdr_field));
+	if (!hdrs) {
+		LM_ERR("could not allocate %d contact headers!\n", hdrs_no);
+		return -1;
+	}
+
+	/* reset all header fields before populating new ones */
+	to_msg->callid = NULL;
+	to_msg->to = NULL;
+	to_msg->cseq = NULL;
+	to_msg->from = NULL;
+	to_msg->maxforwards = NULL;
+	to_msg->content_type = NULL;
+	to_msg->content_length = NULL;
+	to_msg->expires = NULL;
+	to_msg->organization = NULL;
+	to_msg->priority = NULL;
+	to_msg->subject = NULL;
+	to_msg->user_agent = NULL;
+	to_msg->content_disposition = NULL;
+	to_msg->rpid = NULL;
+	to_msg->refer_to = NULL;
+	to_msg->session_expires = NULL;
+	to_msg->min_se = NULL;
+	to_msg->min_expires = NULL;
+	to_msg->privacy = NULL;
+	to_msg->contact = NULL;
+	to_msg->route = NULL;
+	to_msg->record_route = NULL;
+	to_msg->path = NULL;
+	to_msg->authorization = NULL;
+	to_msg->proxy_auth = NULL;
+	to_msg->proxy_require = NULL;
+	to_msg->supported = NULL;
+	to_msg->unsupported = NULL;
+	to_msg->allow = NULL;
+	to_msg->event = NULL;
+	to_msg->accept = NULL;
+	to_msg->accept_language = NULL;
+	to_msg->accept_disposition = NULL;
+	to_msg->diversion = NULL;
+	to_msg->call_info = NULL;
+	to_msg->www_authenticate = NULL;
+	to_msg->proxy_authenticate = NULL;
+	to_msg->ppi = NULL;
+	to_msg->pai = NULL;
+	to_msg->h_via1 = NULL;
+
+	for (i = 0, hdr = from_msg->headers; hdr; i++, hdr = hdr->next) {
+		memcpy(&hdrs[i], hdr, sizeof(struct hdr_field));
+		/* fix next and sibling */
+		hdrs[i].next = &hdrs[i + 1];
+		hdrs[i].sibling = NULL;
+		switch(hdr->type) {
+			link_hdr_case(callid, HDR_CALLID_T);
+			link_hdr_case(to, HDR_TO_T);
+			link_hdr_case(cseq, HDR_CSEQ_T);
+			link_hdr_case(from, HDR_FROM_T);
+			link_hdr_case(maxforwards, HDR_MAXFORWARDS_T);
+			link_hdr_case(content_type, HDR_CONTENTTYPE_T);
+			link_hdr_case(content_length, HDR_CONTENTLENGTH_T);
+			link_hdr_case(expires, HDR_EXPIRES_T);
+			link_hdr_case(organization, HDR_ORGANIZATION_T);
+			link_hdr_case(priority, HDR_PRIORITY_T);
+			link_hdr_case(subject, HDR_SUBJECT_T);
+			link_hdr_case(user_agent, HDR_USERAGENT_T);
+			link_hdr_case(content_disposition, HDR_CONTENTDISPOSITION_T);
+			link_hdr_case(rpid, HDR_RPID_T);
+			link_hdr_case(refer_to, HDR_REFER_TO_T);
+			link_hdr_case(session_expires, HDR_SESSION_EXPIRES_T);
+			link_hdr_case(min_se, HDR_MIN_SE_T);
+			link_hdr_case(min_expires, HDR_MIN_EXPIRES_T);
+			link_hdr_case(privacy, HDR_PRIVACY_T);
+			link_sibling_hdr_case(contact, HDR_CONTACT_T);
+			link_sibling_hdr_case(route, HDR_ROUTE_T);
+			link_sibling_hdr_case(record_route, HDR_RECORDROUTE_T);
+			link_sibling_hdr_case(path, HDR_PATH_T);
+			link_sibling_hdr_case(authorization, HDR_AUTHORIZATION_T);
+			link_sibling_hdr_case(proxy_auth, HDR_PROXYAUTH_T);
+			link_sibling_hdr_case(proxy_require, HDR_PROXYREQUIRE_T);
+			link_sibling_hdr_case(supported, HDR_SUPPORTED_T);
+			link_sibling_hdr_case(unsupported, HDR_UNSUPPORTED_T);
+			link_sibling_hdr_case(allow, HDR_ALLOW_T);
+			link_sibling_hdr_case(event, HDR_EVENT_T);
+			link_sibling_hdr_case(accept, HDR_ACCEPT_T);
+			link_sibling_hdr_case(accept_language, HDR_ACCEPTLANGUAGE_T);
+			link_sibling_hdr_case(accept_disposition, HDR_ACCEPTDISPOSITION_T);
+			link_sibling_hdr_case(diversion, HDR_DIVERSION_T);
+			link_sibling_hdr_case(call_info, HDR_CALL_INFO_T);
+			link_sibling_hdr_case(www_authenticate, HDR_WWW_AUTHENTICATE_T);
+			link_sibling_hdr_case(proxy_authenticate, HDR_PROXY_AUTHENTICATE_T);
+			link_sibling_hdr_case(ppi, HDR_PPI_T);
+			link_sibling_hdr_case(pai, HDR_PAI_T);
+			link_sibling_hdr_case(h_via1, HDR_VIA_T);
+
+			case HDR_OTHER_T:
+			case HDR_ERROR_T:
+				break;
+			default:
+				LM_ERR("unknown header type %d\n", hdr->type);
+				break;
+		}
+	}
+	hdrs[i - 1].next = 0;
+	to_msg->headers = hdrs;
+#undef link_hdr_case
+#undef link_sibling_hdr_case
+	return 0;
+}
+
 
 /* returns 0 if ok, -1 for errors */
 int parse_msg(char* buf, unsigned int len, struct sip_msg* msg)
@@ -666,26 +807,32 @@ void free_reply_lump( struct lump_rpl *lump)
 }
 
 
-/*only the content*/
+/* Free only the content, not the msg structure itself
+ * NOTE: the function doesn't do any cleanup/reset of the subfields */
 void free_sip_msg(struct sip_msg* msg)
 {
-	if (msg->msg_cb) { msg_callback_process(msg, MSG_DESTROY, NULL); }
-	if (msg->new_uri.s) { pkg_free(msg->new_uri.s); msg->new_uri.len=0; }
-	if (msg->set_global_address.s) {
+	if (msg->msg_cb)
+		msg_callback_process(msg, MSG_DESTROY, NULL);
+	if (msg->new_uri.s)
+		pkg_free(msg->new_uri.s);
+	if (msg->set_global_address.s)
 		pkg_free(msg->set_global_address.s);
-		msg->set_global_address.s = NULL;
-	}
-	if (msg->set_global_port.s) {
+	if (msg->set_global_port.s)
 		pkg_free(msg->set_global_port.s);
-		msg->set_global_port.s = NULL;
-	}
-	if (msg->dst_uri.s) { pkg_free(msg->dst_uri.s); msg->dst_uri.len=0; }
-	if (msg->path_vec.s) { pkg_free(msg->path_vec.s); msg->path_vec.len=0; }
-	if (msg->headers)     free_hdr_field_lst(msg->headers);
-	if (msg->add_rm)      free_lump_list(msg->add_rm);
-	if (msg->body_lumps)  free_lump_list(msg->body_lumps);
-	if (msg->reply_lump)   free_reply_lump(msg->reply_lump);
-	if (msg->body )    { free_sip_body(msg->body);msg->body = 0;}
+	if (msg->dst_uri.s)
+		pkg_free(msg->dst_uri.s);
+	if (msg->path_vec.s)
+		pkg_free(msg->path_vec.s);
+	if (msg->headers)
+		free_hdr_field_lst(msg->headers);
+	if (msg->add_rm)
+		free_lump_list(msg->add_rm);
+	if (msg->body_lumps)
+		free_lump_list(msg->body_lumps);
+	if (msg->reply_lump)
+		free_reply_lump(msg->reply_lump);
+	if (msg->body )
+		free_sip_body(msg->body);
 	/* don't free anymore -- now a pointer to a static buffer */
 }
 
@@ -778,6 +925,284 @@ int set_dst_uri(struct sip_msg *msg, str *uri)
 	return 0;
 }
 
+void reset_dst_uri(struct sip_msg *msg)
+{
+	if(msg->dst_uri.s!=0)
+		pkg_free(msg->dst_uri.s);
+	msg->dst_uri.s = 0;
+	msg->dst_uri.len = 0;
+}
+
+int set_dst_host_port(struct sip_msg *msg, str *host, str *port)
+{
+	char *tmp, *end, *crt, *new_uri;
+	int len;
+	struct sip_uri uri;
+	int user = 0;
+
+	tmp = msg->dst_uri.s;
+	len = msg->dst_uri.len;
+
+	if (tmp == NULL || len == 0) {
+		LM_ERR("failure - null uri\n");
+		return -1;
+	}
+	if (host && (host->s == NULL || host->len == 0)) {
+		LM_ERR("cannot set a null uri domain\n");
+		return -1;
+	}
+	if (parse_uri(tmp, len, &uri)<0) {
+		LM_ERR("bad uri <%.*s>, dropping packet\n", len, tmp);
+		return -1;
+	}
+	new_uri=pkg_malloc(MAX_URI_SIZE);
+	if (new_uri == NULL) {
+		LM_ERR("memory allocation failure\n");
+		return -1;
+	}
+	end=new_uri+MAX_URI_SIZE;
+	crt=new_uri;
+	len = (uri.user.len?uri.user.s:uri.host.s) - tmp;
+	if (crt+len>end) goto error_uri;
+	memcpy(crt,tmp,len);
+	crt += len;
+	/* user */
+	tmp = uri.user.s;
+	len = uri.user.len;
+	if (tmp) {
+		if (crt+len>end) goto error_uri;
+		memcpy(crt,tmp,len);
+		crt += len;
+		user = 1;
+	}
+	/* passwd */
+	tmp = uri.passwd.s;
+	len = uri.passwd.len;
+	if (tmp) {
+		if (crt+len+1>end) goto error_uri;
+		*crt++=':';
+		memcpy(crt, tmp, len);
+		crt += len;
+	}
+	/* host */
+	if (host) {
+		tmp = host->s;
+		len = host->len;
+	} else {
+		tmp = uri.host.s;
+		len = uri.host.len;
+	}
+	if (tmp) {
+		if (user) {
+			if (crt+1>end) goto error_uri;
+			*crt++='@';
+		}
+		if (crt+len+1>end) goto error_uri;
+		memcpy(crt, tmp, len);
+		crt += len;
+	}
+	/* port */
+	if (port) {
+		tmp = port->s;
+		len = port->len;
+	} else {
+		tmp = uri.port.s;
+		len = uri.port.len;
+	}
+	if (tmp) {
+		if (crt+len+1>end) goto error_uri;
+		*crt++=':';
+		memcpy(crt, tmp, len);
+		crt += len;
+	}
+	/* params */
+	tmp=uri.params.s;
+	if (tmp){
+		len=uri.params.len; if(crt+len+1>end) goto error_uri;
+		*crt++=';';
+		memcpy(crt,tmp,len);
+		crt += len;
+	}
+	/* headers */
+	tmp=uri.headers.s;
+	if (tmp){
+		len=uri.headers.len; if(crt+len+1>end) goto error_uri;
+		*crt++='?';
+		memcpy(crt,tmp,len);
+		crt += len;
+	}
+	*crt=0; /* null terminate the thing */
+	/* copy it to the msg */
+	pkg_free(msg->dst_uri.s);
+	msg->dst_uri.s=new_uri;
+	msg->dst_uri.len=crt-new_uri;
+	
+	return 0;
+
+error_uri:
+	pkg_free(new_uri);
+	return -1;
+}
+
+int rewrite_ruri(struct sip_msg *msg, str *sval, int ival,
+				enum rw_ruri_part part)
+{
+	int user = 0;
+	char *tmp, *new_uri, *end, *crt;
+	int len;
+	struct sip_uri uri;
+
+	if (msg->new_uri.s) {
+		tmp=msg->new_uri.s;
+		len=msg->new_uri.len;
+	}else{
+		tmp=msg->first_line.u.request.uri.s;
+		len=msg->first_line.u.request.uri.len;
+	}
+	if (parse_uri(tmp, len, &uri)<0){
+		LM_ERR("bad uri <%.*s>, dropping packet\n", len, tmp);
+		return -1;
+	}
+
+	new_uri=pkg_malloc(MAX_URI_SIZE);
+	if (new_uri==0){
+		LM_ERR("memory allocation failure\n");
+		return -1;
+	}
+	end=new_uri+MAX_URI_SIZE;
+	crt=new_uri;
+	/* begin copying */
+	len = (uri.user.len?uri.user.s:uri.host.s) - tmp;
+	if (crt+len>end) goto error;
+	memcpy(crt,tmp,len);crt+=len;
+
+	if (part==RW_RURI_PREFIX) {
+		if (crt+sval->len>end) goto error;
+		memcpy( crt, sval->s, sval->len);
+		crt+=sval->len;
+		/* whatever we had before, with prefix we have username
+		   now */
+		user=1;
+	}
+
+	if ((part==RW_RURI_USER)||(part==RW_RURI_USERPASS)) {
+		tmp=sval->s;
+		len=sval->len;
+	} else if (part==RW_RURI_STRIP) {
+		if (ival>uri.user.len) {
+			LM_WARN("too long strip asked; "
+					" deleting username: %d of <%.*s>\n",
+					ival, uri.user.len, uri.user.s);
+			len=0;
+		} else if (ival==uri.user.len) {
+			len=0;
+		} else {
+			tmp=uri.user.s + ival;
+			len=uri.user.len - ival;
+		}
+	} else if (part==RW_RURI_STRIP_TAIL) {
+		if (ival>uri.user.len) {
+			LM_WARN("too long strip_tail asked;"
+					" deleting username: %d of <%.*s>\n",
+					ival, uri.user.len, uri.user.s);
+			len=0;
+		} else if (ival==uri.user.len) {
+			len=0;
+		} else {
+			tmp=uri.user.s;
+			len=uri.user.len - ival;
+		}
+	} else {
+		tmp=uri.user.s;
+		len=uri.user.len;
+	}
+
+	if (len){
+		if(crt+len>end) goto error;
+		memcpy(crt,tmp,len);crt+=len;
+		user=1; /* we have an user field so mark it */
+	}
+
+	if (part==RW_RURI_USERPASS) tmp=0;
+	else tmp=uri.passwd.s;
+	/* passwd */
+	if (tmp){
+		len=uri.passwd.len; if(crt+len+1>end) goto error;
+		*crt=':'; crt++;
+		memcpy(crt,tmp,len);crt+=len;
+	}
+	/* host */
+	if (user || tmp){ /* add @ */
+		if(crt+1>end) goto error;
+		*crt='@'; crt++;
+	}
+	if ((part==RW_RURI_HOST) ||(part==RW_RURI_HOSTPORT)) {
+		tmp=sval->s;
+		len=sval->len;
+	} else {
+		tmp=uri.host.s;
+		len = uri.host.len;
+	}
+	if (tmp){
+		if(crt+len>end) goto error;
+		memcpy(crt,tmp,len);crt+=len;
+	}
+	/* port */
+	if (part==RW_RURI_HOSTPORT) tmp=0;
+	else if (part==RW_RURI_PORT) {
+		tmp=sval->s;
+		len=sval->len;
+	} else {
+		tmp=uri.port.s;
+		len = uri.port.len;
+	}
+	if (tmp && len>0){
+		if(crt+len+1>end) goto error;
+		*crt=':'; crt++;
+		memcpy(crt,tmp,len);crt+=len;
+	}
+	/* params */
+	tmp=uri.params.s;
+	if (tmp){
+		/* include in param string the starting ';' */
+		len=uri.params.len+1;
+		tmp--;
+		if(crt+len+1>end) goto error;
+		/* if a maddr param is present, strip it out */
+		if (uri.maddr.len &&
+		(part==RW_RURI_HOSTPORT || part==RW_RURI_HOST)) {
+			memcpy(crt,tmp,uri.maddr.s-tmp-1);
+			crt+=uri.maddr.s-tmp-1;
+			memcpy(crt,uri.maddr_val.s+uri.maddr_val.len,
+				tmp+len-uri.maddr_val.s-uri.maddr_val.len);
+			crt+=tmp+len-uri.maddr_val.s-uri.maddr_val.len;
+		} else {
+			memcpy(crt,tmp,len);crt+=len;
+		}
+	}
+	/* headers */
+	tmp=uri.headers.s;
+	if (tmp){
+		len=uri.headers.len; if(crt+len+1>end) goto error;
+		*crt='?'; crt++;
+		memcpy(crt,tmp,len);crt+=len;
+	}
+	*crt=0; /* null terminate the thing */
+	/* copy it to the msg */
+	if (msg->new_uri.s) pkg_free(msg->new_uri.s);
+	msg->new_uri.s=new_uri;
+	msg->new_uri.len=crt-new_uri;
+	msg->parsed_uri_ok=0;
+
+	return 0;
+
+error:
+	LM_ERR("uri too long\n");
+	if (new_uri)
+		pkg_free(new_uri);
+	return -1;
+}
+
 /*
  * Make a private copy of the string and assign it to path_vec
  */
@@ -812,6 +1237,13 @@ int set_path_vector(struct sip_msg *msg, str *path)
 	return 0;
 }
 
+void clear_path_vector(struct sip_msg *msg)
+{
+	if (msg->path_vec.s) {
+		pkg_free(msg->path_vec.s);
+		memset(&msg->path_vec, 0, sizeof msg->path_vec);
+	}
+}
 
 /* convenience macros */
 #define LC(_cp) ((*(_cp))|0x20)

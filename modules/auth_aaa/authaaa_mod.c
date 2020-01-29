@@ -115,6 +115,7 @@ static dep_export_t deps = {
 	},
 	{ /* modparam dependencies */
 		{ "aaa_url", get_deps_aaa_url },
+		{ NULL, NULL },
 	},
 };
 
@@ -136,6 +137,7 @@ struct module_exports exports = {
 	0,          /* exported pseudo-variables */
 	0,          /* exported transformations */
 	0,          /* extra processes */
+	0,          /* module pre-initialization function */
 	mod_init,   /* module initialization function */
 	0,          /* response function */
 	0,          /* destroy function */

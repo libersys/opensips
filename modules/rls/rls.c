@@ -64,8 +64,8 @@ db_con_t *rls_db = NULL;
 db_func_t rls_dbf;
 
 /** modules variables */
-str server_address= {0, 0};
-str presence_server= {0, 0};
+str contact_user = str_init("rls");
+str presence_server = {NULL, 0};
 int waitn_time = 50;
 str rlsubs_table= str_init("rls_watchers");
 str rlpres_table= str_init("rls_presentity");
@@ -178,7 +178,7 @@ static cmd_export_t cmds[]={
 };
 
 static param_export_t params[]={
-	{ "server_address",         STR_PARAM, &server_address.s           },
+	{ "contact_user",           STR_PARAM, &contact_user.s             },
 	{ "presence_server",        STR_PARAM, &presence_server.s          },
 	{ "rlsubs_table",           STR_PARAM, &rlsubs_table.s             },
 	{ "rlpres_table",           STR_PARAM, &rlpres_table.s             },
@@ -231,6 +231,7 @@ struct module_exports exports= {
 	0,                          /* exported pseudo-variables */
 	0,							/* exported transformations */
 	0,                          /* extra processes */
+	0,                          /* module pre-initialization function */
 	mod_init,                   /* module initialization function */
 	(response_function) 0,      /* response handling function */
 	(destroy_function) destroy, /* destroy function */
@@ -256,35 +257,30 @@ static int mod_init(void)
 
 	LM_DBG("start\n");
 
-	if(!server_address.s)
+	contact_user.len = strlen(contact_user.s);
+
+	if (presence_server.s)
+		presence_server.len = strlen(presence_server.s);
+
+	/* load XCAP API */
+	bind_xcap = (bind_xcap_t)find_export("bind_xcap", 0);
+	if (!bind_xcap)
 	{
-		LM_ERR("server_address parameter not set in configuration file\n");
+		LM_ERR("Can't bind xcap\n");
 		return -1;
 	}
-	server_address.len= strlen(server_address.s);
 
-	if(presence_server.s)
-		presence_server.len= strlen(presence_server.s);
-
-        /* load XCAP API */
-        bind_xcap = (bind_xcap_t)find_export("bind_xcap", 0);
-        if (!bind_xcap)
-        {
-                LM_ERR("Can't bind xcap\n");
-                return -1;
-        }
-
-        if (bind_xcap(&xcap_api) < 0)
-        {
-                LM_ERR("Can't bind xcap\n");
-                return -1;
-        }
-        rls_integrated_xcap_server = xcap_api.integrated_server;
-        db_url = xcap_api.db_url;
-        rls_xcap_table = xcap_api.xcap_table;
-        normalizeSipUri = xcap_api.normalize_sip_uri;
-        xcapParseUri = xcap_api.parse_xcap_uri;
-        xcapDbGetDoc = xcap_api.get_xcap_doc;
+	if (bind_xcap(&xcap_api) < 0)
+	{
+		LM_ERR("Can't bind xcap\n");
+		return -1;
+	}
+	rls_integrated_xcap_server = xcap_api.integrated_server;
+	db_url = xcap_api.db_url;
+	rls_xcap_table = xcap_api.xcap_table;
+	normalizeSipUri = xcap_api.normalize_sip_uri;
+	xcapParseUri = xcap_api.parse_xcap_uri;
+	xcapDbGetDoc = xcap_api.get_xcap_doc;
 
 	if(!rls_integrated_xcap_server)
 	{
@@ -417,7 +413,7 @@ static int mod_init(void)
 	XMLNodeGetAttrContentByName= libxml_api.xmlNodeGetAttrContentByName;
 	XMLDocGetNodeByName= libxml_api.xmlDocGetNodeByName;
 	XMLNodeGetNodeByName= libxml_api.xmlNodeGetNodeByName;
-    XMLNodeGetNodeContentByName= libxml_api.xmlNodeGetNodeContentByName;
+	XMLNodeGetNodeContentByName= libxml_api.xmlNodeGetNodeContentByName;
 
 	if(XMLNodeGetAttrContentByName== NULL || XMLDocGetNodeByName== NULL ||
 			XMLNodeGetNodeByName== NULL || XMLNodeGetNodeContentByName== NULL)
@@ -829,41 +825,41 @@ int add_rls_event(modparam_t type, void* val)
 
 static void update_subs(subs_t *subs)
 {
-        xmlDocPtr doc = NULL;
-        xmlNodePtr service_node = NULL;
+	xmlDocPtr doc = NULL;
+	xmlNodePtr service_node = NULL;
 
-        if ((subs->expires -= (int)time(NULL)) <= 0)
-        {
-                LM_WARN("found expired subscription for: %.*s\n",
-                        subs->pres_uri.len, subs->pres_uri.s);
-                goto done;
-        }
+	if ((subs->expires -= (int)time(NULL)) <= 0)
+	{
+		LM_WARN("found expired subscription for: %.*s\n",
+				subs->pres_uri.len, subs->pres_uri.s);
+		goto done;
+	}
 
-        if(get_resource_list(&subs->pres_uri, subs->from_user,
-                                subs->from_domain, &service_node, &doc) < 0)
-        {
-                LM_ERR("failed getting resource list for: %.*s\n",
-                        subs->pres_uri.len, subs->pres_uri.s);
-                goto done;
-        }
-        if(doc==NULL)
-        {
-                LM_WARN("no document returned for: %.*s\n",
-                        subs->pres_uri.len, subs->pres_uri.s);
-                goto done;
-        }
+	if(get_resource_list(&subs->pres_uri, subs->from_user,
+						 subs->from_domain, &service_node, &doc) < 0)
+	{
+		LM_ERR("failed getting resource list for: %.*s\n",
+			   subs->pres_uri.len, subs->pres_uri.s);
+		goto done;
+	}
+	if(doc==NULL)
+	{
+		LM_WARN("no document returned for: %.*s\n",
+				subs->pres_uri.len, subs->pres_uri.s);
+		goto done;
+	}
 
-        subs->internal_update_flag = 1;
+	subs->internal_update_flag = 1;
 
-        if(resource_subscriptions(subs, service_node) < 0)
-        {
-                LM_ERR("failed sending subscribe requests to resources in list\n");
-                goto done;
-        }
+	if(resource_subscriptions(subs, service_node) < 0)
+	{
+		LM_ERR("failed sending subscribe requests to resources in list\n");
+		goto done;
+	}
 
 done:
-        if (doc != NULL)
-                xmlFreeDoc(doc);
+	if (doc != NULL)
+		xmlFreeDoc(doc);
 }
 
 mi_response_t *mi_update_subscriptions(const mi_params_t *params,
@@ -872,7 +868,7 @@ mi_response_t *mi_update_subscriptions(const mi_params_t *params,
 	struct sip_uri parsed_uri;
 	str uri;
 	int i;
-    subs_t *subs, *subs_copy;
+	subs_t *subs, *subs_copy;
 
 	if (get_mi_string_param(params, "presentity_uri", &uri.s, &uri.len) < 0)
 		return init_mi_param_error();
@@ -909,9 +905,9 @@ mi_response_t *mi_update_subscriptions(const mi_params_t *params,
 		while (subs != NULL)
 		{
 			if (subs->from_user.len == parsed_uri.user.len &&
-			    strncmp(subs->from_user.s, parsed_uri.user.s, parsed_uri.user.len) == 0 &&
-			    subs->from_domain.len == parsed_uri.host.len &&
-			    strncmp(subs->from_domain.s, parsed_uri.host.s, parsed_uri.host.len) == 0)
+				strncmp(subs->from_user.s, parsed_uri.user.s, parsed_uri.user.len) == 0 &&
+				subs->from_domain.len == parsed_uri.host.len &&
+				strncmp(subs->from_domain.s, parsed_uri.host.s, parsed_uri.host.len) == 0)
 			{
 				subs_copy = NULL;
 

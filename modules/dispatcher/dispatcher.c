@@ -341,6 +341,7 @@ struct module_exports exports= {
 	0,          /* exported pseudo-variables */
 	0,			/* exported transformations */
 	0,          /* extra processes */
+	0,          /* module pre-initialization function */
 	mod_init,   /* module initialization function */
 	(response_function) 0,
 	(destroy_function) destroy,
@@ -984,28 +985,6 @@ static void destroy(void)
             free_int_list(ds_probing_list, NULL);
 }
 
-#define CHECK_AND_EXPAND_LIST(_list_) \
-	do{\
-		if (_list_->type == GPARAM_TYPE_PVS) { \
-			_list_ ## _exp_end = _list_->next; \
-			_list_ ## _exp_start = set_list_from_pvs(msg, _list_->v.pvs,\
-					_list_->next);\
-			if (_list_ ## _exp_start == NULL) {\
-				LM_ERR("error when expanding " #_list_ " variable\n");\
-				return -1;\
-			}\
-			_list_ = _list_ ## _exp_start;\
-		}\
-	} while (0)
-
-#define TRY_FREE_EXPANDED_LIST(_list_) \
-	do {\
-		if (_list_ ## _exp_start && _list_ == _list_ ## _exp_end) {\
-			free_int_list(_list_ ## _exp_start, _list_ ## _exp_end);\
-			_list_ ## _exp_start = NULL; \
-		}\
-	} while (0)
-
 /**
  *
 static int w_ds_select(struct sip_msg* msg, char* part_set, char* alg,
@@ -1023,23 +1002,17 @@ static int w_ds_select(struct sip_msg *msg, int set, int alg, int flags,
 		return -1;
 
 	ds_select_ctl.mode = mode;
-	ds_select_ctl.max_results = 1000;
-	ds_select_ctl.set_destination = 0;
+	ds_select_ctl.set_destination = 1;
 	ds_select_ctl.ds_flags = 0;
 	ds_select_ctl.partition = part;
 	ds_select_ctl.set = set;
 	ds_select_ctl.alg = alg;
 	ds_select_ctl.ds_flags = flags;
-	ds_select_ctl.max_results = max_res ? *max_res : 0;
+	ds_select_ctl.max_results = max_res ? *max_res : 1000;
 
 	memset(&selected_dst, 0, sizeof(ds_selected_dst));
 
-	_ret = ds_select_dst(msg, &ds_select_ctl, &selected_dst,
-		ds_select_ctl.ds_flags);
-	if (_ret>=0) ret = _ret;
-
 	/* last ds_select_dst run: setting destination. */
-	ds_select_ctl.set_destination = 1;
 	LM_DBG("ds_select: %d %d %d %d\n",
 		ds_select_ctl.set, ds_select_ctl.alg, ds_select_ctl.max_results,
 		ds_select_ctl.set_destination);
@@ -1133,6 +1106,7 @@ static int w_ds_mark_dst(struct sip_msg *msg, str *flags, void *part)
 /************************** MI STUFF ************************/
 
 #define MI_ERR_RELOAD 			"ERROR Reloading data"
+#define MI_ERR_RELOAD_SYNC 		"ERROR Synchronizing from cluster"
 #define MI_NOT_SUPPORTED		"DB mode not configured"
 #define MI_UNK_PARTITION		"ERROR Unknown partition"
 
@@ -1278,6 +1252,9 @@ mi_response_t *ds_mi_reload(const mi_params_t *params,
 		if (ds_reload_db(part_it)<0)
 			return init_mi_error(500, MI_SSTR(MI_ERR_RELOAD));
 
+	if (ds_cluster_id && ds_cluster_sync() < 0)
+		return init_mi_error(500, MI_SSTR(MI_ERR_RELOAD_SYNC));
+
 	return init_mi_result_ok();
 }
 
@@ -1296,8 +1273,11 @@ mi_response_t *ds_mi_reload_1(const mi_params_t *params,
 		return init_mi_error(500, MI_SSTR(MI_UNK_PARTITION));
 	if (ds_reload_db(partition) < 0)
 		return init_mi_error(500, MI_SSTR(MI_ERR_RELOAD));
-	else
-		return init_mi_result_ok();
+	
+	if (ds_cluster_id && ds_cluster_sync() < 0)
+		return init_mi_error(500, MI_SSTR(MI_ERR_RELOAD_SYNC));
+
+	return init_mi_result_ok();
 }
 
 static int w_ds_is_in_list(struct sip_msg *msg, str *ip, int *port,

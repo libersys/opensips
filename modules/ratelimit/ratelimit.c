@@ -55,7 +55,7 @@ gen_lock_t * rl_lock;
 static double * rl_load_value;     /* actual load, used by PIPE_ALGO_FEEDBACK */
 static double * pid_kp, * pid_ki, * pid_kd, * pid_setpoint; /* PID tuning params */
 static int * drop_rate;         /* updated by PIPE_ALGO_FEEDBACK */
-static int *rl_feedback_limit;
+int *rl_feedback_limit;
 
 int * rl_network_load;	/* network load */
 int * rl_network_count;	/* flag for counting network algo users */
@@ -202,7 +202,7 @@ struct module_exports exports= {
 	MODULE_VERSION,
 	DEFAULT_DLFLAGS,	/* dlopen flags */
 	0,					/* load function */
-	&deps,            /* OpenSIPS module dependencies */
+	&deps,				/* OpenSIPS module dependencies */
 	cmds,
 	NULL,
 	params,
@@ -211,6 +211,7 @@ struct module_exports exports= {
 	mod_items,			/* exported pseudo-variables */
 	0,					/* exported transformations */
 	0,					/* extra processes */
+	0,					/* module pre-initialization function */
 	mod_init,			/* module initialization function */
 	0,
 	mod_destroy,		/* module exit function */
@@ -598,9 +599,9 @@ int rl_pipe_check(rl_pipe_t *pipe)
 		case PIPE_ALGO_RED:
 			if (!pipe->load)
 				return 1;
-			return counter % pipe->load ? -1 : 1;
+			return (counter % pipe->load ? -1 : 1);
 		case PIPE_ALGO_NETWORK:
-			return pipe->load;
+			return (pipe->load ? pipe->load : 1);
 		case PIPE_ALGO_FEEDBACK:
 			return (hash[counter % 100] < *drop_rate) ? -1 : 1;
 		case PIPE_ALGO_HISTORY:
@@ -628,7 +629,7 @@ mi_response_t *mi_stats(const mi_params_t *params,
 	if (!resp)
 		return 0;
 
-	if (rl_stats(resp_obj, NULL)) {
+	if (rl_stats(resp_obj, NULL) < 0) {
 		LM_ERR("cannot mi print values\n");
 		goto free;
 	}
@@ -653,6 +654,7 @@ mi_response_t *mi_stats_1(const mi_params_t *params,
 	mi_response_t *resp;
 	mi_item_t *resp_obj;
 	str pipe_name;
+	int rc;
 
 	resp = init_mi_result_object(&resp_obj);
 	if (!resp)
@@ -661,9 +663,12 @@ mi_response_t *mi_stats_1(const mi_params_t *params,
 	if (get_mi_string_param(params, "pipe", &pipe_name.s, &pipe_name.len) < 0)
 		return init_mi_param_error();
 
-	if (rl_stats(resp_obj, &pipe_name)) {
+	rc = rl_stats(resp_obj, &pipe_name);
+	if (rc < 0) {
 		LM_ERR("cannot mi print values\n");
 		goto free;
+	} else if (rc == 1) {
+		return init_mi_error(404, MI_SSTR("Pipe Not Found"));
 	}
 
 	LOCK_GET(rl_lock);

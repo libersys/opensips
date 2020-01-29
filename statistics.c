@@ -329,22 +329,22 @@ void destroy_stats_collector(void)
 			for( stat=collector->hstats[i] ; stat ; ) {
 				tmp_stat = stat;
 				stat = stat->hnext;
-				if ((tmp_stat->flags&STAT_IS_FUNC)==0 && tmp_stat->u.val && !(tmp_stat->flags&STAT_NO_ALLOC))
+				if ((tmp_stat->flags&STAT_IS_FUNC)==0 && tmp_stat->u.val && !(tmp_stat->flags&STAT_NOT_ALLOCATED))
 					shm_free(tmp_stat->u.val);
 				if ( (tmp_stat->flags&STAT_SHM_NAME) && tmp_stat->name.s)
 					shm_free(tmp_stat->name.s);
-				if (!(tmp_stat->flags&STAT_NO_ALLOC))
+				if (!(tmp_stat->flags&STAT_NOT_ALLOCATED))
 					shm_free(tmp_stat);
 			}
 			/* dynamic stats*/
 			for( stat=collector->dy_hstats[i] ; stat ; ) {
 				tmp_stat = stat;
 				stat = stat->hnext;
-				if ((tmp_stat->flags&STAT_IS_FUNC)==0 && tmp_stat->u.val && !(tmp_stat->flags&STAT_NO_ALLOC))
+				if ((tmp_stat->flags&STAT_IS_FUNC)==0 && tmp_stat->u.val && !(tmp_stat->flags&STAT_NOT_ALLOCATED))
 					shm_free(tmp_stat->u.val);
 				if ( (tmp_stat->flags&STAT_SHM_NAME) && tmp_stat->name.s)
 					shm_free(tmp_stat->name.s);
-				if (!(tmp_stat->flags&STAT_NO_ALLOC))
+				if (!(tmp_stat->flags&STAT_NOT_ALLOCATED))
 					shm_free(tmp_stat);
 			}
 		}
@@ -398,7 +398,7 @@ int register_stat2( char *module, char *name, stat_var **pvar,
 
 	name_len = strlen(name);
 
-	if(flags&STAT_NO_ALLOC){
+	if(flags&STAT_NOT_ALLOCATED){
 		stat = *pvar;
 		goto do_register;
 	}
@@ -451,7 +451,7 @@ do_register:
 
 	stat->name.len = name_len;
 	if ( (flags&STAT_SHM_NAME)==0 ) {
-		if(flags&STAT_NO_ALLOC)
+		if(flags&STAT_NOT_ALLOCATED)
 			stat->name.s = shm_malloc_unsafe(name_len);
 		else
 			stat->name.s = (char*)(stat+1);
@@ -922,28 +922,18 @@ error:
 static mi_response_t *mi_reset_stats(const mi_params_t *params,
 								struct mi_handler *async_hdl)
 {
-	mi_response_t *resp;
-	mi_item_t *resp_obj;
 	mi_item_t *params_arr;
 	int i, no_params;
 	str val;
 	stat_var *stat;
 	int found;
 
-	resp = init_mi_result_object(&resp_obj);
-	if (!resp)
-		return 0;
-
-	if (get_mi_array_param(params, "statistics", &params_arr, &no_params) < 0) {
-		free_mi_response(resp);
+	if (get_mi_array_param(params, "statistics", &params_arr, &no_params) < 0)
 		return init_mi_param_error();
-	}
 
 	for (i = 0; i < no_params; i++) {
-		if (get_mi_arr_param_string(params_arr, i, &val.s, &val.len) < 0) {
-			free_mi_response(resp);
+		if (get_mi_arr_param_string(params_arr, i, &val.s, &val.len) < 0)
 			return init_mi_param_error();
-		}
 
 		stat = get_stat(&val);
 		if (stat==0)
@@ -953,12 +943,10 @@ static mi_response_t *mi_reset_stats(const mi_params_t *params,
 		found = 1;
 	}
 
-	if (!found) {
-		free_mi_response(resp);
+	if (!found)
 		return init_mi_error(404, MI_SSTR("Statistics Not Found"));
-	}
 
-	return resp_obj;
+	return init_mi_result_ok();
 }
 
 

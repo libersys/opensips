@@ -65,7 +65,8 @@ static int smpp_read_req(struct tcp_connection* conn, int* bytes_read);
 static int smpp_write_async_req(struct tcp_connection* con,int fd);
 static int smpp_conn_init(struct tcp_connection* c);
 static void smpp_conn_clean(struct tcp_connection* c);
-static int send_smpp_msg(struct sip_msg* msg, str *name);
+static int send_smpp_msg(struct sip_msg* msg, str *name, str *from,
+		str *to, str *body, int *utf16, int *delivery_confirmation);
 
 static unsigned smpp_port = 2775;
 static int smpp_max_msg_chunks = 8;
@@ -77,7 +78,12 @@ static cmd_export_t cmds[] = {
 	{"proto_init", (cmd_function)smpp_init, {{0,0,0}},
 		REQUEST_ROUTE},
 	{"send_smpp_message", (cmd_function)send_smpp_msg, {
-		{CMD_PARAM_STR,0,0}, {0,0,0}},
+		{CMD_PARAM_STR,0,0},
+		{CMD_PARAM_STR | CMD_PARAM_OPT, 0, 0},
+		{CMD_PARAM_STR | CMD_PARAM_OPT, 0, 0},
+		{CMD_PARAM_STR | CMD_PARAM_OPT, 0, 0},
+		{CMD_PARAM_INT | CMD_PARAM_OPT, 0, 0},
+		{CMD_PARAM_INT | CMD_PARAM_OPT, 0, 0},{0,0,0}},
 		REQUEST_ROUTE|FAILURE_ROUTE|BRANCH_ROUTE},
 	{0,0,{{0,0,0}},0}
 };
@@ -118,7 +124,8 @@ struct module_exports exports = {
 	0,			/* exported pseudo-variables */
 	0,			/* exported transformations */
 	0,			/* extra processes */
-	mod_init,		/* module initialization function */
+	0,			/* module pre-initialization function */
+	mod_init,	/* module initialization function */
 	0,			/* response function */
 	0,			/* destroy function */
 	child_init,		/* per-child init function */
@@ -464,9 +471,14 @@ static int smpp_write_async_req(struct tcp_connection* con,int fd)
 	return 0;
 }
 
-static int send_smpp_msg(struct sip_msg *msg, str *name)
+static int send_smpp_msg(struct sip_msg* msg, str *name, str *from,
+		str *to, str *body, int *utf16, int *delivery_confirmation)
 {
-	 str body;
+	str sbody;
+	struct sip_uri *uri;
+	content_t *msg_content_type;
+	int body_type;
+	param_t *p;
 	smpp_session_t *session = NULL;
 
 	session = smpp_session_get(name);
@@ -475,11 +487,66 @@ static int send_smpp_msg(struct sip_msg *msg, str *name)
 		return -2;
 	}
 
-	if(msg->parsed_uri_ok==0)
-	    parse_sip_msg_uri(msg);
+	if (!from) {
+		uri = parse_from_uri(msg);
+		if (!uri) {
+			LM_ERR("could not parse from uri!\n");
+			return -1;
+		}
+		from = &uri->user;
+	}
 
-	get_body(msg, &body);
-	return send_submit_or_deliver_request(&body, &parse_from_uri(msg)->user,
-			&msg->parsed_uri.user, session);
+	if (!to) {
+		if(msg->parsed_uri_ok==0 && (parse_sip_msg_uri(msg)) < 0) {
+			LM_ERR("Failed to parse URI \n");
+			return -1;
+		}
+		to = &msg->parsed_uri.user;
+	}
+
+	if (!body) {
+		if (get_body(msg, &sbody) < 0) {
+			LM_ERR("Failed to fetch SIP body \n");
+			return -1;
+		}
+	} else
+		sbody = *body;
+
+	if (!utf16) {
+		if (!body) {
+			body_type = parse_content_type_hdr(msg);
+			if (body_type < 0) {
+				LM_ERR("Failed to parse content type header \n");
+				return -1;
+			} else if (body_type > 0) {
+
+				if (body_type != (TYPE_TEXT << 16 | SUBTYPE_PLAIN))
+					LM_WARN("Don't know how to parse body type %d(%s). "
+							"Treating as text/plain\n", body_type,
+							convert_mime2string_CT(body_type));
+				body_type = SMPP_CODING_DEFAULT;
+				/* Expecting Content-Type:text/plain; charset=UTF-16 */
+
+				/* check the charset */
+				msg_content_type = msg->content_type->parsed;
+
+				for (p = msg_content_type->params; p; p=p->next) {
+					if (p->name.len == 7 && memcmp(p->name.s,"charset",7) == 0) {
+						if (p->body.len == 6 &&
+						memcmp(p->body.s,"UTF-16",6) == 0) {
+							body_type = SMPP_CODING_UCS2;
+							break;
+						}
+					}
+				}
+			}
+		} else
+			body_type = SMPP_CODING_DEFAULT;
+	} else if (*utf16)
+		body_type = SMPP_CODING_UCS2;
+	else
+		body_type = SMPP_CODING_DEFAULT;
+
+	return send_submit_or_deliver_request(&sbody, body_type,
+			from, to, session, delivery_confirmation);
 }
-

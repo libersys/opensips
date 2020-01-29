@@ -46,6 +46,7 @@
 #include "../../msg_translator.h"
 #include "../../action.h"
 #include "../../socket_info.h"
+#include "../../ipc.h"
 
 /* BPF structure */
 #ifdef __OS_linux
@@ -239,16 +240,16 @@ static void raw_socket_process(int rank);
 static void destroy(void);
 static int cfg_validate(void);
 
-static int sip_capture(struct sip_msg *msg, char *table,
+static int sip_capture(struct sip_msg *msg, void *table,
                        str *cf1, str *cf2, str *cf3);
-static int async_sip_capture(struct sip_msg *msg, async_ctx *actx, char *table,
+static int async_sip_capture(struct sip_msg *msg, async_ctx *actx, void *table,
                              str *cf1, str *cf2, str *cf3);
 static int sip_capture_fix_table(void** param);
 static int sip_capture_async_fix_table(void** param);
 static int fix_hep_value_type(void **param);
 static int fix_hep_name(void **param);
 static int fix_vendor_id(void **param);
-static int w_sip_capture(struct sip_msg *msg, char *table_name,
+static int w_sip_capture(struct sip_msg *msg, void *table_name,
 		async_ctx *actx, str *cf1, str *cf2, str *cf3);
 
 
@@ -555,7 +556,7 @@ static acmd_export_t acmds[] = {
 };
 
 static proc_export_t procs[] = {
-        {"RAW receiver",  0,  0, raw_socket_process, 1, 0},
+        {"RAW receiver",  0,  0, raw_socket_process, 1, PROC_FLAG_INITCHILD},
         {0,0,0,0,0,0}
 };
 
@@ -698,6 +699,7 @@ struct module_exports exports = {
 	mod_items,          /*!< exported pseudo-variables */
 	0,                  /*!< exported transformations */
 	procs,          /*!< extra processes */
+	0,          /*!< module pre-initialization function */
 	mod_init,   /*!< module initialization function */
 	0,          /*!< response function */
 	destroy,    /*!< destroy function */
@@ -788,11 +790,6 @@ static int mod_init(void) {
 			if ( parse_hep_route(hep_route_name) < 0 ) {
 				LM_ERR("bad hep route name %s\n", hep_route_name);
 				return -1;
-			}
-
-			if (hep_route_id > HEP_SIP_ROUTE) {
-				/* builds a dummy message for being able to use the hep route */
-				build_dummy_msg();
 			}
 		}
 
@@ -2448,6 +2445,10 @@ int hep_msg_received(void)
 		/* don't go through the main route */
 		return HEP_SCRIPT_SKIP;
 	} else if (hep_route_id > HEP_SIP_ROUTE) {
+
+		/* builds a dummy message */
+		build_dummy_msg();
+
 		/* set request route type */
 		set_route_type( REQUEST_ROUTE );
 
@@ -2457,6 +2458,7 @@ int hep_msg_received(void)
 		/* free possible loaded avps */
 		reset_avps();
 
+		free_sip_msg( &dummy_req );
 
 		/* requested to go through the main sip route */
 		if (ctx->resume_with_sip) {
@@ -2483,7 +2485,7 @@ static int fixup_tz_table(void** param,  struct tz_table_list** list)
 		return -1;
 	}
 
-	table_s.s = (char *) *param;
+	table_s = *((str *) *param);
 	table_s.len = strlen(table_s.s);
 
 	parse_table_str(&table_s, tz_fxup_param);
@@ -2497,12 +2499,13 @@ static int fixup_tz_table(void** param,  struct tz_table_list** list)
 				!memcmp(it->table->prefix.s, tz_fxup_param->prefix.s,
 					tz_fxup_param->prefix.len) &&
 				!memcmp(it->table->suffix.s, tz_fxup_param->suffix.s,
-					tz_fxup_param->suffix.len))
+					tz_fxup_param->suffix.len)) {
 
 			/* table already there */
 			pkg_free(tz_fxup_param);
 			*param = it->table;
 			return 1;
+		}
 	}
 
 	list_el = pkg_malloc(sizeof(struct tz_table_list));
@@ -3024,7 +3027,7 @@ static inline void build_table_name(tz_table_t* table_format, str* table_s)
 	struct tm* gmtm;
 
 	table_s->s = table_buf;
-	memcpy(current_table.s, table_format->prefix.s, table_format->prefix.len);
+	memcpy(table_s->s, table_format->prefix.s, table_format->prefix.len);
 	table_s->len = table_format->prefix.len;
 
 	if (table_format->suffix.len && table_format->suffix.s) {
@@ -3050,20 +3053,20 @@ static inline struct tz_table_list* search_table(tz_table_t* el, struct tz_table
 
 
 
-static int sip_capture(struct sip_msg *msg, char *table,
+static int sip_capture(struct sip_msg *msg, void *table,
                        str *cf1, str *cf2, str *cf3)
 {
 	return w_sip_capture(msg, table, NULL, cf1, cf2, cf3);
 }
 
-static int async_sip_capture(struct sip_msg *msg, async_ctx *actx, char *table,
+static int async_sip_capture(struct sip_msg *msg, async_ctx *actx, void *table,
                              str *cf1, str *cf2, str *cf3)
 {
 	return w_sip_capture(msg, table, actx, cf1, cf2, cf3);
 }
 
 
-static int w_sip_capture(struct sip_msg *msg, char *table_name,
+static int w_sip_capture(struct sip_msg *msg, void *table_name,
                          async_ctx *actx, str *cf1, str *cf2, str *cf3)
 {
 	struct _sipcapture_object sco;
@@ -3445,20 +3448,17 @@ static int w_sip_capture(struct sip_msg *msg, char *table_name,
 		/* IP source and destination */
 
 		/*source ip*/
-		memcpy(src_buf_ip, ip_addr2a(&msg->rcv.src_ip),
-				sizeof(&msg->rcv.src_ip));
-		ip_addr2a((struct ip_addr*)src_buf_ip);
+		tmp = ip_addr2a(&msg->rcv.src_ip);
+		sco.source_ip.len = strlen(tmp);
+		memcpy(src_buf_ip, tmp, sco.source_ip.len);
 		sco.source_ip.s = src_buf_ip;
-		sco.source_ip.len = strlen(src_buf_ip);
 		sco.source_port = msg->rcv.src_port;
 
-
 		/*destination ip*/
-		memcpy(dst_buf_ip, ip_addr2a(&msg->rcv.dst_ip),
-				sizeof(&msg->rcv.dst_ip));
-		ip_addr2a((struct ip_addr*)dst_buf_ip);
+		tmp = ip_addr2a(&msg->rcv.dst_ip);
+		sco.destination_ip.len = strlen(tmp);
+		memcpy(dst_buf_ip, tmp, sco.destination_ip.len);
 		sco.destination_ip.s = dst_buf_ip;
-		sco.destination_ip.len = strlen(sco.destination_ip.s);
 		sco.destination_port = msg->rcv.dst_port;
 	}
 
@@ -4915,6 +4915,22 @@ error:
 
 }
 
+
+struct ipc_msg_pack {
+	struct receive_info ri;
+	str buf;
+};
+
+void rpc_msg_received(int sender, void *param)
+{
+	struct ipc_msg_pack *ipc_pack = (struct ipc_msg_pack *)param;
+
+	receive_msg( ipc_pack->buf.s, ipc_pack->buf.len,
+		&ipc_pack->ri, NULL, 0);
+
+	shm_free( ipc_pack );
+}
+
 /* Local raw receive loop */
 int raw_capture_rcv_loop(int rsock, int port1, int port2, int ipip) {
 
@@ -4922,17 +4938,17 @@ int raw_capture_rcv_loop(int rsock, int port1, int port2, int ipip) {
 	static char buf [BUF_SIZE+1];
 	union sockaddr_union from;
 	union sockaddr_union to;
-        struct receive_info ri;
 	int len;
 	struct ip *iph;
-        struct udphdr *udph;
-        char* udph_start;
-        unsigned short udp_len;
+	struct udphdr *udph;
+	char* udph_start;
+	unsigned short udp_len;
 	int offset = 0;
 	char* end;
 	unsigned short dst_port;
 	unsigned short src_port;
 	struct ip_addr dst_ip, src_ip;
+	struct ipc_msg_pack *ipc_pack;
 
 
 	for(;;) {
@@ -4940,17 +4956,17 @@ int raw_capture_rcv_loop(int rsock, int port1, int port2, int ipip) {
 		len = recvfrom(rsock, buf, BUF_SIZE, 0, 0, 0);
 
 		if (len<0){
-                        if (len==-1){
-                                LM_ERR("recvfrom: %s [%d]\n",
-                                                strerror(errno), errno);
-                                if ((errno==EINTR)||(errno==EWOULDBLOCK))
-                                        continue;
+			if (len==-1){
+				LM_ERR("recvfrom: %s [%d]\n",
+						strerror(errno), errno);
+				if ((errno==EINTR)||(errno==EWOULDBLOCK))
+					continue;
 				else goto error;
-                        }else{
-                                LM_DBG("recvfrom error: %d\n", len);
-                                continue;
-                        }
-                }
+			}else{
+				LM_DBG("recvfrom error: %d\n", len);
+				continue;
+			}
+		}
 
 		end=buf+len;
 
@@ -4958,8 +4974,8 @@ int raw_capture_rcv_loop(int rsock, int port1, int port2, int ipip) {
 
 		if (len < (sizeof(struct ip)+sizeof(struct udphdr) + offset)) {
 			LM_DBG("received small packet: %d. Ignore it\n",len);
-                	continue;
-        	}
+			continue;
+		}
 
 		iph = (struct ip*) (buf + offset);
 
@@ -4970,59 +4986,71 @@ int raw_capture_rcv_loop(int rsock, int port1, int port2, int ipip) {
 		udph = (struct udphdr*) udph_start;
 		offset +=sizeof(struct udphdr);
 
-        	if ((buf+offset)>end){
-                	continue;
-        	}
-
-		udp_len=ntohs(udph->uh_ulen);
-	        if ((udph_start+udp_len)!=end){
-        	        if ((udph_start+udp_len)>end){
-				continue;
-        	        }else{
-                	        LM_DBG("udp length too small: %d/%d\n", (int)udp_len, (int)(end-udph_start));
-	                        continue;
-        	        }
-	        }
-			/* cleaup previous values in dst and ri */
-			memset(&dst_ip, 0, sizeof(dst_ip));
-			memset(&ri, 0, sizeof(ri));
-
-			/*FIL IPs*/
-			dst_ip.af=AF_INET;
-			dst_ip.len=4;
-			dst_ip.u.addr32[0]=iph->ip_dst.s_addr;
-			/* fill dst_port */
-			dst_port=ntohs(udph->uh_dport);
-			ip_addr2su(&to, &dst_ip, dst_port);
-			/* fill src_port */
-			src_port=ntohs(udph->uh_sport);
-			src_ip.af=AF_INET;
-			src_ip.len=4;
-			src_ip.u.addr32[0]=iph->ip_src.s_addr;
-			ip_addr2su(&from, &src_ip, src_port);
-			su_setport(&from, src_port);
-
-			ri.src_su=from;
-			su2ip_addr(&ri.src_ip, &from);
-			ri.src_port=src_port;
-			su2ip_addr(&ri.dst_ip, &to);
-			ri.dst_port=dst_port;
-			ri.proto=PROTO_UDP;
+		if ((buf+offset)>end){
+			continue;
+		}
 
 		/* cut off the offset */
-	        len -= offset;
+		len -= offset;
 
 		if (len<MIN_UDP_PACKET){
-                        LM_DBG("probing packet received from\n");
-                        continue;
-                }
+			LM_DBG("probing packet received from\n");
+			continue;
+		}
 
-                LM_DBG("PORT: [%d] and [%d]\n", port1, port2);
+		udp_len=ntohs(udph->uh_ulen);
+		if ((udph_start+udp_len)!=end){
+			if ((udph_start+udp_len)>end){
+				continue;
+			}else{
+				LM_DBG("udp length too small: %d/%d\n", (int)udp_len, (int)(end-udph_start));
+				continue;
+			}
+		}
+
+		ipc_pack = (struct ipc_msg_pack*)shm_malloc( sizeof(struct ipc_msg_pack) + len );
+		if (ipc_pack==NULL) {
+			LM_ERR("failed to allocate new ipc_msg_pack, discarding...\n");
+			continue;
+		}
+		memset( ipc_pack, 0, sizeof(struct ipc_msg_pack) + len);
+
+		/* cleaup previous values in dst */
+		memset(&dst_ip, 0, sizeof(dst_ip));
+
+		/*FIL IPs*/
+		dst_ip.af=AF_INET;
+		dst_ip.len=4;
+		dst_ip.u.addr32[0]=iph->ip_dst.s_addr;
+		/* fill dst_port */
+		dst_port=ntohs(udph->uh_dport);
+		ip_addr2su(&to, &dst_ip, dst_port);
+		/* fill src_port */
+		src_port=ntohs(udph->uh_sport);
+		src_ip.af=AF_INET;
+		src_ip.len=4;
+		src_ip.u.addr32[0]=iph->ip_src.s_addr;
+		ip_addr2su(&from, &src_ip, src_port);
+		su_setport(&from, src_port);
+
+		ipc_pack->ri.src_su=from;
+		su2ip_addr(&(ipc_pack->ri.src_ip), &from);
+		ipc_pack->ri.src_port=src_port;
+			su2ip_addr(&(ipc_pack->ri.dst_ip), &to);
+		ipc_pack->ri.dst_port=dst_port;
+		ipc_pack->ri.proto=PROTO_UDP;
+
+		LM_DBG("PORT: [%d] and [%d]\n", port1, port2);
+
+		ipc_pack->buf.s = (char*)(ipc_pack+1);
+		ipc_pack->buf.len = len;
+		memcpy( ipc_pack->buf.s, buf+offset, len);
 
 		if((!port1 && !port2)
-		        || (src_port >= port1 && src_port <= port2) || (dst_port >= port1 && dst_port <= port2)
-		        || (!port2 && (src_port == port1 || dst_port == port1)))
-		                          receive_msg(buf+offset, len, &ri, NULL, 0);
+		|| (src_port >= port1 && src_port <= port2)
+		|| (dst_port >= port1 && dst_port <= port2)
+		|| (!port2 && (src_port == port1 || dst_port == port1)))
+			ipc_dispatch_rpc( rpc_msg_received, ipc_pack);
 	}
 
 	return 0;

@@ -67,19 +67,20 @@
 #define ACTWATCH_TABLE_VERSION 12
 
 char *log_buf = NULL;
-static int clean_period=100;
-static int watchers_clean_period=3600;
-static int db_update_period=100;
+static int clean_period = 100;
+static int watchers_clean_period = 3600;
+static int db_update_period = 100;
 
 /* database connection */
 db_con_t *pa_db = NULL;
 db_func_t pa_dbf;
-str presentity_table= str_init("presentity");
+str presentity_table = str_init("presentity");
 str active_watchers_table = str_init("active_watchers");
-str watchers_table= str_init("watchers");
+str watchers_table = str_init("watchers");
 
-int library_mode= 0;
-str server_address= {0, 0};
+int library_mode = 0;
+str contact_user = str_init("presence");
+
 evlist_t* EvList= NULL;
 
 /* TM bind */
@@ -133,6 +134,8 @@ int end_sub_on_timeout= 1;
 pres_ev_t** pres_event_p= NULL;
 pres_ev_t** dialog_event_p= NULL;
 
+char *federation_mode_str;
+
 int phtable_size= 9;
 phtable_t* pres_htable = NULL;
 unsigned int waiting_subs_daysno = 0;
@@ -170,19 +173,19 @@ static param_export_t params[]={
 	{ "expires_offset",         INT_PARAM, &expires_offset },
 	{ "max_expires_subscribe",  INT_PARAM, &max_expires_subscribe },
 	{ "max_expires_publish",    INT_PARAM, &max_expires_publish },
-	{ "server_address",         STR_PARAM, &server_address.s},
+	{ "contact_user",           STR_PARAM, &contact_user.s},
 	{ "subs_htable_size",       INT_PARAM, &shtable_size},
 	{ "pres_htable_size",       INT_PARAM, &phtable_size},
 	{ "fallback2db",            INT_PARAM, &fallback2db},
 	{ "enable_sphere_check",    INT_PARAM, &sphere_enable},
 	{ "waiting_subs_daysno",    INT_PARAM, &waiting_subs_daysno},
 	{ "mix_dialog_presence",    INT_PARAM, &mix_dialog_presence},
-	{ "bla_presentity_spec",    STR_PARAM, &bla_presentity_spec_param},
+	{ "bla_presentity_spec",    STR_PARAM, &bla_presentity_spec_param.s},
 	{ "bla_fix_remote_target",  INT_PARAM, &fix_remote_target},
 	{ "notify_offline_body",    INT_PARAM, &notify_offline_body},
 	{ "end_sub_on_timeout",     INT_PARAM, &end_sub_on_timeout},
 	{ "cluster_id",             INT_PARAM, &pres_cluster_id},
-	{ "cluster_federation_mode",INT_PARAM, &cluster_federation},
+	{ "cluster_federation_mode",STR_PARAM, &federation_mode_str},
 	{ "cluster_pres_events",    STR_PARAM, &clustering_events.s},
 	{0,0,0}
 };
@@ -248,6 +251,7 @@ struct module_exports exports= {
 	0,							/* exported pseudo-variables */
 	0,			 				/* exported transformations */
 	0,							/* extra processes */
+	0,							/* module pre-initialization function */
 	mod_init,					/* module initialization function */
 	(response_function) 0,      /* response handling function */
 	(destroy_function) destroy, /* destroy function */
@@ -308,13 +312,7 @@ static int mod_init(void)
 	if(max_expires_publish<= 0)
 		max_expires_publish = 3600;
 
-	if(server_address.s== NULL)
-		LM_DBG("server_address parameter not set in configuration file\n");
-
-	if(server_address.s)
-		server_address.len= strlen(server_address.s);
-	else
-		server_address.len= 0;
+	contact_user.len = strlen(contact_user.s);
 
 	/* load SIGNALING API */
 	if(load_sig_api(&sigb)< 0)
@@ -327,6 +325,17 @@ static int mod_init(void)
 	if(load_tm_api(&tmb)==-1)
 	{
 		LM_ERR("can't load tm functions\n");
+		return -1;
+	}
+
+	if (!strcasecmp(federation_mode_str, "disabled")) {
+		cluster_federation = FEDERATION_DISABLED;
+	} else if (!strcasecmp(federation_mode_str, "on-demand-sharing")) {
+		cluster_federation = FEDERATION_ON_DEMAND;
+	} else if (!strcasecmp(federation_mode_str, "full-sharing")) {
+		cluster_federation = FEDERATION_FULL_SHARING;
+	} else {
+		LM_ERR("invalid cluster_federation_mode: '%s'\n", federation_mode_str);
 		return -1;
 	}
 
@@ -766,6 +775,10 @@ static inline int mi_print_shtable_record(mi_item_t *p_item, subs_t* s)
 		goto error;
 
 	if (add_mi_number(item, MI_SSTR("version"), s->version) < 0)
+		goto error;
+
+	if (s->sh_tag.len && add_mi_string(item, MI_SSTR("sharing_tag"),
+	s->sh_tag.s, s->sh_tag.len) < 0)
 		goto error;
 
 	if (add_mi_string(item, MI_SSTR("to_user"),

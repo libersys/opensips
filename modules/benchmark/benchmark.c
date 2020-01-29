@@ -189,6 +189,7 @@ struct module_exports exports = {
 	mod_items,  /* exported pseudo-variables */
 	0,			/* exported transformations */
 	0,          /* extra processes */
+	0,          /* module pre-initialization function */
 	mod_init,   /* module initialization function */
 	0,          /* response function */
 	destroy,    /* destroy function */
@@ -657,7 +658,7 @@ mi_response_t *mi_bm_poll_results(const mi_params_t *params,
 		return 0;
 
 	timers_arr = add_mi_array(resp_obj, MI_SSTR("Timers"));
-	if (timers_arr)
+	if (!timers_arr)
 		goto error;
 
 	for(bmt = bm_mycfg->timers; bmt!=NULL; bmt=bmt->next) {

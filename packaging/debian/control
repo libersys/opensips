@@ -12,7 +12,7 @@ Build-Depends: bison,
                libcurl4-gnutls-dev,
                libdb-dev (>= 4.6.19),
                libexpat1-dev,
-               libgeoip-dev (>= 1.4.4),
+               libmaxminddb-dev | libgeoip-dev (>= 1.4.4),
                libhiredis-dev,
                libjson-c-dev,
                libldap2-dev,
@@ -78,6 +78,7 @@ Suggests: opensips-b2bua-module,
           opensips-siprec-module,
           opensips-snmpstats-module,
           opensips-sqlite-module,
+          opensips-stir-shaken-module,
           opensips-tls-module,
           opensips-wss-module,
           opensips-tlsmgm-module,
@@ -216,19 +217,18 @@ Package: opensips-uuid-module
 Architecture: any
 Multi-Arch: same
 Depends: opensips (= ${binary:Version}), ${misc:Depends}, ${shlibs:Depends}
-Description: UUID (Universally Unique Identifier) generator
+Description: UUID (Universally Unique Identifier) generator for OpenSIPS
  OpenSIPS is a very fast and flexible SIP (RFC3261)
  server. Written entirely in C, OpenSIPS can handle thousands calls
  per second even on low-budget hardware.
  .
- This package provides the a UUID generated for OpenSIPS script.
+ This package provides a UUID generator for the OpenSIPS script.
 
 Package: opensips-xmlrpc-module
 Architecture: any
 Depends: opensips (= ${binary:Version}),
-	 opensips-http-modules (= ${binary:Version}),
-	 ${shlibs:Depends},
-	 ${misc:Depends}
+         opensips-http-modules (= ${binary:Version}),
+         ${shlibs:Depends}, ${misc:Depends}
 Multi-Arch: same
 Description: XMLRPC support for OpenSIPS's Management Interface
  OpenSIPS is a very fast and flexible SIP (RFC3261)
@@ -641,3 +641,15 @@ Description: Python scripting support
  per second even on low-budget hardware.
  .
  This module provides a Python interface to implement your scripting logic.
+
+Package: opensips-stir-shaken-module
+Architecture: any
+Multi-Arch: same
+Depends: opensips (= ${binary:Version}), ${misc:Depends}, ${shlibs:Depends}
+Description: STIR/SHAKEN support for OpenSIPS
+ OpenSIPS is a very fast and flexible SIP (RFC3261)
+ server. Written entirely in C, OpenSIPS can handle thousands calls
+ per second even on low-budget hardware.
+ .
+ This module adds support for implementing STIR/SHAKEN (RFC 8224, RFC 8588)
+ Authentication and Verification services in OpenSIPS.

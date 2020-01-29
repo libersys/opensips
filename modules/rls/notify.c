@@ -566,14 +566,11 @@ int rls_notify_extra_hdr(subs_t* subs, str* start_cid, str* bstr,
 
 	lexpire_s = int2str(subs->expires, &lexpire_len);
 
-	len = 7 /*Event: */ + subs->event->name.len +4 /*;id=*/+ subs->event_id.len+
-		CRLF_LEN + 10 /*Contact: <*/ + subs->local_contact.len + 1/*>*/ +
-		((subs->sockinfo && subs->sockinfo->proto!=PROTO_UDP)?
-		 15/*";transport=xxxx"*/:0) + CRLF_LEN +/*Subscription-State:*/ 20 +
-		((subs->expires>0)?(15+lexpire_len):25) + CRLF_LEN + /*Require: */ 18
-		+ CRLF_LEN + ((start_cid && bstr)?(/*Content-Type*/59 +
-		/*start*/12 + start_cid->len + /*boundary*/12 +
-		bstr->len + CRLF_LEN):0);
+	len =  7 /* Event: */ + subs->event->name.len + 4 /* ;id= */ + subs->event_id.len + CRLF_LEN
+		+ 10 /* Contact: < */ + subs->local_contact.len + 1 /* > */ + CRLF_LEN
+		+ 20 /* Subscription-State: */ + ((subs->expires > 0) ? 15+lexpire_len : 25) + CRLF_LEN
+		+ 18 /* Require: */ + CRLF_LEN
+		+ ((start_cid && bstr) ? 59 /* Content-Type */ + 12 /* start */ + start_cid->len + 12 /* boundary */ + bstr->len + CRLF_LEN : 0);
 
 	hdr->s = (char*)pkg_malloc(len);
 	if(hdr->s== NULL)
@@ -590,11 +587,11 @@ int rls_notify_extra_hdr(subs_t* subs, str* start_cid, str* bstr,
 	p+= subs->event->name.len;
 	if(subs->event_id.len && subs->event_id.s)
 	{
- 		memcpy(p, ";id=", 4);
- 		p += 4;
- 		memcpy(p, subs->event_id.s, subs->event_id.len);
- 		p += subs->event_id.len;
- 	}
+		memcpy(p, ";id=", 4);
+		p += 4;
+		memcpy(p, subs->event_id.s, subs->event_id.len);
+		p += subs->event_id.len;
+	}
 	memcpy(p, CRLF, CRLF_LEN);
 	p += CRLF_LEN;
 
@@ -602,19 +599,6 @@ int rls_notify_extra_hdr(subs_t* subs, str* start_cid, str* bstr,
 	p += 10;
 	memcpy(p, subs->local_contact.s, subs->local_contact.len);
 	p +=  subs->local_contact.len;
-
-	if (subs->sockinfo && subs->sockinfo->proto!=PROTO_UDP)
-	{
-		memcpy(p,";transport=",11);
-		p += 11;
-		p = proto2str(subs->sockinfo->proto, p);
-		if (p == NULL)
-		{
-			LM_ERR("invalid proto\n");
-			pkg_free(hdr->s);
-			return -1;
-		}
-	}
 	*(p++) = '>';
 
 	memcpy(p, CRLF, CRLF_LEN);
@@ -1046,12 +1030,12 @@ char* get_auth_string(int flag)
 int rls_get_resource_list(str *filename, str *selector, str *username, str *domain,
 		          xmlNodePtr *rl_node, xmlDocPtr *xmldoc)
 {
-        static char path_buf[MAX_PATH_LEN+1];
+	static char path_buf[MAX_PATH_LEN+1];
 
-        int checked = 0;
-        str path;
-        str *doc = NULL;
-        str *etag = NULL;
+	int checked = 0;
+	str path;
+	str *doc = NULL;
+	str *etag = NULL;
 	xmlXPathContextPtr xpathCtx = NULL;
 	xmlXPathObjectPtr xpathObj = NULL;
 
@@ -1061,39 +1045,39 @@ int rls_get_resource_list(str *filename, str *selector, str *username, str *doma
 		return -1;
 	}
 
-        if (xcapDbGetDoc(username, domain, RESOURCE_LISTS, filename, NULL, &doc, &etag) < 0)
-        {
+	if (xcapDbGetDoc(username, domain, RESOURCE_LISTS, filename, NULL, &doc, &etag) < 0)
+	{
 		LM_ERR("while getting resource-lists document from DB\n");
-                return -1;
-        }
+		return -1;
+	}
 
-        if (doc == NULL)
-        {
+	if (doc == NULL)
+	{
 		LM_DBG("No rl document found\n");
-                return -1;
-        }
+		return -1;
+	}
 
 	LM_DBG("rl document:\n%.*s\n", doc->len, doc->s);
 
 	path.s = path_buf;
 	path.len = 0;
 	if (selector->s) {
-            while (checked < selector->len && path.len + 8 <= MAX_PATH_LEN)
-            {
-                    if (selector->s[checked] == '/')
-                    {
-                            memcpy(path.s+path.len, "/xmlns:", 7);
-                            path.len += 7;
-                    }
-                    else
-                    {
-                            path.s[path.len++] = selector->s[checked];
-                    }
-                    checked++;
-            }
-            path.s[path.len] = '\0';
-            LM_DBG("path: %.*s", path.len, path.s);
-        }
+		while (checked < selector->len && path.len + 8 <= MAX_PATH_LEN)
+		{
+			if (selector->s[checked] == '/')
+			{
+				memcpy(path.s+path.len, "/xmlns:", 7);
+				path.len += 7;
+			}
+			else
+			{
+				path.s[path.len++] = selector->s[checked];
+			}
+			checked++;
+		}
+		path.s[path.len] = '\0';
+		LM_DBG("path: %.*s", path.len, path.s);
+	}
 
 	*xmldoc = xmlParseMemory(doc->s, doc->len);
 	if (*xmldoc == NULL)
@@ -1114,7 +1098,7 @@ int rls_get_resource_list(str *filename, str *selector, str *username, str *doma
 	}
 	else
 	{
-	        /* TODO: move this to xcap module? */
+		/* TODO: move this to xcap module? */
 		xpathCtx = xmlXPathNewContext(*xmldoc);
 		if (xpathCtx == NULL)
 		{
@@ -1154,26 +1138,26 @@ int rls_get_resource_list(str *filename, str *selector, str *username, str *doma
 		xmlXPathFreeContext(xpathCtx);
 	}
 
-        pkg_free(doc->s);
-        pkg_free(doc);
-        pkg_free(etag->s);
-        pkg_free(etag);
+	pkg_free(doc->s);
+	pkg_free(doc);
+	pkg_free(etag->s);
+	pkg_free(etag);
 
-        return 0;
+	return 0;
 
 error:
-        if (doc != NULL)
-        {
-                if (doc->s != NULL)
-                        pkg_free(doc->s);
-                pkg_free(doc);
-        }
-        if (etag != NULL)
-        {
-                if (etag->s != NULL)
-                        pkg_free(etag->s);
-                pkg_free(etag);
-        }
+	if (doc != NULL)
+	{
+		if (doc->s != NULL)
+			pkg_free(doc->s);
+		pkg_free(doc);
+	}
+	if (etag != NULL)
+	{
+		if (etag->s != NULL)
+			pkg_free(etag->s);
+		pkg_free(etag);
+	}
 	if (xpathObj)
 		xmlXPathFreeObject(xpathObj);
 	if (xpathCtx)

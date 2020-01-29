@@ -109,6 +109,7 @@ struct module_exports exports = {
 	NULL,                       /* exported PV */
 	NULL,						/* exported transformations */
 	mi_procs,                   /* extra processes */
+	0,                          /* module pre-initialization function */
 	mod_init,                   /* module initialization function */
 	(response_function) NULL,   /* response handling function */
 	(destroy_function) destroy, /* destroy function */

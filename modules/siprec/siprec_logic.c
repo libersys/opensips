@@ -217,7 +217,7 @@ static int srec_b2b_notify(struct sip_msg *msg, str *key, int type, void *param)
 	LM_DBG("received b2b reply with code %d\n", msg->REPLY_STATUS);
 
 	ret = 0;
-	/* check if the reply was successfully */
+	/* check if the reply was successful */
 	if (msg->REPLY_STATUS < 200) {
 		/* wait for a final reply */
 		return 0;
@@ -262,7 +262,7 @@ static int srec_b2b_notify(struct sip_msg *msg, str *key, int type, void *param)
 		}
 
 		/* no need to keep ref on the dialog, since we rely on it from now on */
-		srec_dlg.unref_dlg(ss->dlg, 1);
+		srec_dlg.dlg_unref(ss->dlg, 1);
 		/* also, the b2b ref moves on the dialog - so we avoid a ref-unref */
 	}
 
@@ -282,7 +282,7 @@ no_recording:
 	srec_logic_destroy(ss);
 
 	/* we finishd everything with the dialog, let it be! */
-	srec_dlg.unref_dlg(ss->dlg, 1);
+	srec_dlg.dlg_unref(ss->dlg, 1);
 	ss->dlg = NULL;
 	SIPREC_UNREF(ss);
 	return ret;
@@ -345,6 +345,7 @@ static int srs_send_invite(struct src_sess *sess)
 	client_info_t ci;
 	str param, body;
 	str *client;
+	str hdrs;
 
 	static str extra_headers = str_init(
 			"Require: siprec" CRLF
@@ -359,7 +360,20 @@ static int srs_send_invite(struct src_sess *sess)
 	/* TODO: fix uris */
 	ci.to_uri = ci.req_uri;
 	ci.from_uri = ci.to_uri;
-	ci.extra_headers = &extra_headers;
+	if (sess->headers.s) {
+		hdrs.s = pkg_malloc(extra_headers.len + sess->headers.len);
+		if (!hdrs.s) {
+			LM_ERR("could not add extra headers to SRC request!\n");
+			ci.extra_headers = &extra_headers;
+		} else {
+			memcpy(hdrs.s, sess->headers.s, sess->headers.len);
+			hdrs.len = sess->headers.len;
+			memcpy(hdrs.s + hdrs.len, extra_headers.s, extra_headers.len);
+			hdrs.len += extra_headers.len;
+			ci.extra_headers = &hdrs;
+		}
+	} else
+		ci.extra_headers = &extra_headers;
 	ci.send_sock = sess->socket;
 
 	ci.local_contact.s = contact_builder(sess->socket, &ci.local_contact.len);
@@ -379,10 +393,14 @@ static int srs_send_invite(struct src_sess *sess)
 		LM_ERR("cannot start recording with %.*s!\n",
 				ci.req_uri.len, ci.req_uri.s);
 		pkg_free(body.s);
+		if (ci.extra_headers != &extra_headers)
+			pkg_free(ci.extra_headers->s);
 		return -1;
 	}
 	/* release generated body */
 	pkg_free(body.s);
+	if (ci.extra_headers != &extra_headers)
+		pkg_free(ci.extra_headers->s);
 
 	/* store the key in the param */
 	sess->b2b_key.s = shm_malloc(client->len);
@@ -478,7 +496,7 @@ static void tm_update_recording(struct cell *t, int type, struct tmcb_params *ps
 		return;
 
 	tmp = (struct _tm_src_param *)*ps->param;
-	/* engage only on successfull calls */
+	/* engage only on successful calls */
 	SIPREC_LOCK(tmp->ss);
 	src_update_recording(ps->rpl, tmp->ss, tmp->part_no);
 	SIPREC_UNLOCK(tmp->ss);
@@ -492,7 +510,7 @@ void tm_start_recording(struct cell *t, int type, struct tmcb_params *ps)
 		return;
 
 	ss = (struct src_sess *)*ps->param;
-	/* engage only on successfull calls */
+	/* engage only on successful calls */
 	SIPREC_LOCK(ss);
 	/* if session has been started, do not start it again */
 	if (ss->flags & SIPREC_STARTED)

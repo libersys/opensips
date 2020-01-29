@@ -110,7 +110,7 @@ int siplua_exec(struct sip_msg* _msg, const str *fnc, const str *mystr)
 
       reason.s = "Bad Request-URI";
       reason.len = sizeof("Bad Request-URI")-1;
-      if (slb.reply(_msg, 400, &reason) == -1) {
+      if (slb.reply(_msg, 400, &reason, NULL) == -1) {
 	LM_ERR("failed to send reply\n");
       }
       return -1;
@@ -132,7 +132,7 @@ int siplua_meminfo(struct sip_msg *msg)
   struct mem_info info;
 
   shm_info(&info);
-  siplua_log(L_INFO, "free/%d used/%d real_used/%d max_used/%d min_frag/%d total_frags/%d",
+  siplua_log(L_INFO, "free/%d used/%d real_used/%d max_used/%d min_frag/%d total_frags/%d\n",
 	     info.free, info.used, info.real_used, info.max_used, info.min_frag, info.total_frags);
   return -1;
 }

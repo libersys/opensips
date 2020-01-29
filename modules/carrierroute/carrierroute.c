@@ -270,6 +270,7 @@ struct module_exports exports = {
 	0,          /* exported pseudo-variables */
 	0,			/* exported transformations */
 	0,          /* extra processes */
+	0,          /* Module pre-initialization function */
 	mod_init,   /* Module initialization function */
 	0,          /* Response function */
 	mod_destroy,/* Destroy function */

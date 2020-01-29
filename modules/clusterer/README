@@ -24,17 +24,18 @@ CLUSTERER Module
               1.4.8. ping_interval
               1.4.9. ping_timeout
               1.4.10. node_timeout
-              1.4.11. sync_packet_max_size
-              1.4.12. id_col
-              1.4.13. cluster_id_col
-              1.4.14. node_id_col
-              1.4.15. url_col
-              1.4.16. state_col
-              1.4.17. no_ping_retries_col
-              1.4.18. priority_col
-              1.4.19. sip_addr_col
-              1.4.20. flags_col
-              1.4.21. description_col
+              1.4.11. seed_fallback_interval
+              1.4.12. sync_packet_max_size
+              1.4.13. id_col
+              1.4.14. cluster_id_col
+              1.4.15. node_id_col
+              1.4.16. url_col
+              1.4.17. state_col
+              1.4.18. no_ping_retries_col
+              1.4.19. priority_col
+              1.4.20. sip_addr_col
+              1.4.21. flags_col
+              1.4.22. description_col
 
         1.5. Exported Functions
 
@@ -116,27 +117,28 @@ CLUSTERER Module
    1.8. Set ping_interval parameter
    1.9. Set ping_timeout parameter
    1.10. Set node_timeout parameter
-   1.11. Set sync_packet_max_size parameter
-   1.12. Set id_col parameter
-   1.13. Set cluster_id_col parameter
-   1.14. Set node_id_col parameter
-   1.15. Set url_col parameter
-   1.16. Set state_col parameter
-   1.17. Set no_ping_retries_col parameter
-   1.18. Set priority_col parameter
-   1.19. Set sip_addr_col parameter
-   1.20. Set flags_col parameter
-   1.21. Set description_col parameter
-   1.22. cluster_send_req() usage
-   1.23. cluster_send_rpl() usage
-   1.24. cluster_broadcast_req() usage
-   1.25. cluster_check_addr() usage
-   1.26. clusterer_list usage
-   1.27. clusterer_list_topology usage
-   1.28. clusterer_list_cap usage
-   1.29. Example database content - clusterer table
-   1.30. Node A configuration
-   1.31. Node B configuration
+   1.11. Set seed_fallback_interval parameter
+   1.12. Set sync_packet_max_size parameter
+   1.13. Set id_col parameter
+   1.14. Set cluster_id_col parameter
+   1.15. Set node_id_col parameter
+   1.16. Set url_col parameter
+   1.17. Set state_col parameter
+   1.18. Set no_ping_retries_col parameter
+   1.19. Set priority_col parameter
+   1.20. Set sip_addr_col parameter
+   1.21. Set flags_col parameter
+   1.22. Set description_col parameter
+   1.23. cluster_send_req() usage
+   1.24. cluster_send_rpl() usage
+   1.25. cluster_broadcast_req() usage
+   1.26. cluster_check_addr() usage
+   1.27. clusterer_list usage
+   1.28. clusterer_list_topology usage
+   1.29. clusterer_list_cap usage
+   1.30. Example database content - clusterer table
+   1.31. Node A configuration
+   1.32. Node B configuration
 
 Chapter 1. Admin Guide
 
@@ -193,16 +195,16 @@ Chapter 1. Admin Guide
    clusterer module in order to partition some distributed logic
    only over the synchronized nodes in the cluster.
 
-   When the nodes in the cluster start for the first time(or all
-   nodes are restarted), all of them are empty and try to find a
-   suitable node to pull data from. In order to help
-   "bootstrapping" the cluster a "seed" node (considered to be
-   already synchronized from startup) should be defined. This is
-   done by setting the value seed for the flags column in the
+   Each node in the cluster starts with an empty dataset and tries
+   to find a suitable node to pull data from. In order to help
+   "bootstrap" the cluster, a "seed" node should be defined. This
+   is done by setting the value seed for the flags column in the
    clusterer table(or the property with the same name in the
-   my_node_info parameter). Note that this mechanism is required
-   only for capabilities that synchronize data at startup so check
-   the corresponding modules documentation.
+   my_node_info parameter). The seed node will simply fall back to
+   a "synced" state after a configurable interval(
+   seed_fallback_interval parameter). Note that this mechanism is
+   required only for capabilities that synchronize data at
+   startup, so check the corresponding modules documentation.
 
    The clusterer module transparently exposes the sip_addr column
    from the clusterer table(or the property with the same name in
@@ -386,7 +388,20 @@ modparam("clusterer", "ping_timeout", 500)
 modparam("clusterer", "node_timeout", 10)
 ...
 
-1.4.11. sync_packet_max_size
+1.4.11. seed_fallback_interval
+
+   Only relevant for "seed" nodes. The time, in seconds, to wait
+   for a suitable donor node before falling back to a "synced"
+   state, following a node restart or an MI cluster sync command.
+
+   Default value is “5”.
+
+   Example 1.11. Set seed_fallback_interval parameter
+...
+modparam("clusterer", "seed_fallback_interval", 10)
+...
+
+1.4.12. sync_packet_max_size
 
    The maximum size of the BIN packets sent while doing data
    synchronization. This is only a suggested value as the actual
@@ -394,70 +409,70 @@ modparam("clusterer", "node_timeout", 10)
 
    Default value is “65535”.
 
-   Example 1.11. Set sync_packet_max_size parameter
+   Example 1.12. Set sync_packet_max_size parameter
 ...
 modparam("clusterer", "sync_packet_max_size", 32765)
 ...
 
-1.4.12. id_col
+1.4.13. id_col
 
    The name of the column storing an id for the table rows.
 
    Default value is “id”.
 
-   Example 1.12. Set id_col parameter
+   Example 1.13. Set id_col parameter
 ...
 modparam("clusterer", "id_col", "id")
 ...
 
-1.4.13. cluster_id_col
+1.4.14. cluster_id_col
 
    The name of the column to store the id of a cluster.
 
    Default value is “cluster_id”.
 
-   Example 1.13. Set cluster_id_col parameter
+   Example 1.14. Set cluster_id_col parameter
 ...
 modparam("clusterer", "cluster_id_col", "cluster_id")
 ...
 
-1.4.14. node_id_col
+1.4.15. node_id_col
 
    The name of the column to store the id of an instance. The
    values must be greater than 0.
 
    Default value is “node_id”.
 
-   Example 1.14. Set node_id_col parameter
+   Example 1.15. Set node_id_col parameter
 ...
 modparam("clusterer", "node_id_col", "node_id")
 ...
 
-1.4.15. url_col
+1.4.16. url_col
 
    The name of the column containing the instance url. The values
    must be greater than 0.
 
    Default value is “url”.
 
-   Example 1.15. Set url_col parameter
+   Example 1.16. Set url_col parameter
 ...
 modparam("clusterer", "url_col", "url")
 ...
 
-1.4.16. state_col
+1.4.17. state_col
 
    The name of the column storing the state of the
    node(enabled/disabled).
 
    Default value is “state”.
 
-   Example 1.16. Set state_col parameter
+   Example 1.17. Set state_col parameter
 ...
 modparam("clusterer", "state_col", "state")
 ...
 
-1.4.17. no_ping_retries_col
+1.4.18. no_ping_retries_col
 
    The name of the column containing the maximum number of ping
    retries before the link with the neighbour node is considered
@@ -465,12 +480,12 @@ modparam("clusterer", "state_col", "state")
 
    Default value is “no_ping_retries”.
 
-   Example 1.17. Set no_ping_retries_col parameter
+   Example 1.18. Set no_ping_retries_col parameter
 ...
 modparam("clusterer", "no_ping_retries_col", "no_ping_retries")
 ...
 
-1.4.18. priority_col
+1.4.19. priority_col
 
    The name of the column storing the node priority to be chosen
    as next hop in case of same length(number of hops) paths when
@@ -478,40 +493,40 @@ modparam("clusterer", "no_ping_retries_col", "no_ping_retries")
 
    Default value is “priority”.
 
-   Example 1.18. Set priority_col parameter
+   Example 1.19. Set priority_col parameter
 ...
 modparam("clusterer", "priority_col", "priority")
 ...
 
-1.4.19. sip_addr_col
+1.4.20. sip_addr_col
 
    The name of the column containing a SIP address for the node.
 
    Default value is “sip_addr”.
 
-   Example 1.19. Set sip_addr_col parameter
+   Example 1.20. Set sip_addr_col parameter
 ...
 modparam("clusterer", "sip_addr_col", "sip_addr")
 ...
 
-1.4.20. flags_col
+1.4.21. flags_col
 
    The name of the column containing the node flags.
 
    Default value is “flags”.
 
-   Example 1.20. Set flags_col parameter
+   Example 1.21. Set flags_col parameter
 ...
 modparam("clusterer", "flags_col", "flags")
 ...
 
-1.4.21. description_col
+1.4.22. description_col
 
    The name of the column containing a node description.
 
    Default value is “description”.
 
-   Example 1.21. Set description_col parameter
+   Example 1.22. Set description_col parameter
 ...
 modparam("clusterer", "description_col", "description")
 ...
@@ -537,8 +552,8 @@ modparam("clusterer", "description_col", "description")
      * tag (var, optional) - randomly generated communication tag.
 
    The function can return the following values:
-     * 1 - successfuly sent message to destination node or a valid
-       next hop
+     * 1 - successfully sent message to destination node or a
+       valid next hop
      * -1 - local node is disabled so sending is impossbile
      * -2 - destination node is not reachable through any path
        according to the discovered topology
@@ -548,7 +563,7 @@ modparam("clusterer", "description_col", "description")
    This function can be used from REQUEST_ROUTE, FAILURE_ROUTE,
    ONREPLY_ROUTE, BRANCH_ROUTE, LOCAL_ROUTE and EVENT_ROUTE.
 
-   Example 1.22. cluster_send_req() usage
+   Example 1.23. cluster_send_req() usage
 ...
 # send a request
 cluster_send_req(1, 1, "Check USER: $fU", $var(req_tag));
@@ -581,8 +596,8 @@ route[rpl_resume] {
      * tag (var) - communication tag.
 
    The function can return the following values:
-     * 1 - successfuly sent message to destination node or a valid
-       next hop
+     * 1 - successfully sent message to destination node or a
+       valid next hop
      * -1 - local node is disabled so sending is impossbile
      * -2 - destination node is not reachable through any path
        according to the discovered topology
@@ -592,11 +607,11 @@ route[rpl_resume] {
    This function can be used from REQUEST_ROUTE, FAILURE_ROUTE,
    ONREPLY_ROUTE, BRANCH_ROUTE, LOCAL_ROUTE and EVENT_ROUTE.
 
-   Example 1.23. cluster_send_rpl() usage
+   Example 1.24. cluster_send_rpl() usage
 ...
 event_route[E_CLUSTERER_REQ_RECEIVED] {
-  cluster_send_rpl($param(cl_id), $param(src_id), $var(my_reply), $param
-(rcv_tag));
+  cluster_send_rpl($param(cluster_id), $param(src_id), $var(my_reply), $
+param(tag));
 }
 ...
 
@@ -607,7 +622,7 @@ event_route[E_CLUSTERER_REQ_RECEIVED] {
    nodes in the specified cluster.
 
    The function can return the following values:
-     * 1 - successfuly sent message to at least one node;
+     * 1 - successfully sent message to at least one node;
      * -1 - local node is disabled so sending is impossbile;
      * -2 - all nodes in the cluster are unreachable according to
        the discovered topology;
@@ -620,7 +635,7 @@ event_route[E_CLUSTERER_REQ_RECEIVED] {
    This function can be used from REQUEST_ROUTE, FAILURE_ROUTE,
    ONREPLY_ROUTE, BRANCH_ROUTE, LOCAL_ROUTE and EVENT_ROUTE.
 
-   Example 1.24. cluster_broadcast_req() usage
+   Example 1.25. cluster_broadcast_req() usage
 ...
 cluster_broadcast_req($var(cl_id), $var(share_data));
 ...
@@ -644,7 +659,7 @@ cluster_broadcast_req($var(cl_id), $var(share_data));
    This function can be used from REQUEST_ROUTE, FAILURE_ROUTE,
    ONREPLY_ROUTE, BRANCH_ROUTE, LOCAL_ROUTE and EVENT_ROUTE.
 
-   Example 1.25. cluster_check_addr() usage
+   Example 1.26. cluster_check_addr() usage
 ...
 if (cluster_check_addr(1, $si)) {
         ...
@@ -675,7 +690,7 @@ if (cluster_check_addr(1, $si)) {
 
    Parameters:none
 
-   Example 1.26. clusterer_list usage
+   Example 1.27. clusterer_list usage
 $ opensips-cli -x mi clusterer_list
 {
     "Clusters": [
@@ -709,7 +724,7 @@ $ opensips-cli -x mi clusterer_list
 
    Parameters:none
 
-   Example 1.27. clusterer_list_topology usage
+   Example 1.28. clusterer_list_topology usage
 $ opensips-cli -x mi clusterer_list_topology
 {
     "Clusters": [
@@ -797,7 +812,7 @@ opensips-cli -x mi cluster_broadcast_mi 1 dr_reload partition_5
 
    Parameters:none
 
-   Example 1.28. clusterer_list_cap usage
+   Example 1.29. clusterer_list_cap usage
 $ opensips-cli -x mi clusterer_list
 {
     "Clusters": [
@@ -925,7 +940,7 @@ $ opensips-cli -x mi clusterer_list
 
    We insert in the the clusterer table the following:
 
-   Example 1.29. Example database content - clusterer table
+   Example 1.30. Example database content - clusterer table
 +----+------------+---------+----------------------+-------+------------
 -----+----------+----------+-------+-------------+
 | id | cluster_id | node_id | url                  | state | no_ping_ret
@@ -968,7 +983,7 @@ ries | priority | sip_addr | flags | description |
    configure the two instances of OpenSIPS. First, we configure
    Node A:
 
-   Example 1.30. Node A configuration
+   Example 1.31. Node A configuration
 ...
 listen = bin:192.168.0.5:5566 # bin listener for Node A
 
@@ -984,7 +999,7 @@ modparam("ratelimit", "pipe_replication_cluster", 1)
 
    Similarly, the configuration for Node B is as follows:
 
-   Example 1.31. Node B configuration
+   Example 1.32. Node B configuration
 ...
 listen = bin:192.168.0.6:5566 # bin listener for Node B
 
@@ -1072,7 +1087,7 @@ typedef struct clusterer_node {
      * int node_id - the id of the destination node
 
    The function returns one of the following:
-     * CLUSTERER_SEND_SUCCES - successfuly sent packet to
+     * CLUSTERER_SEND_SUCCESS - successfully sent packet to
        destination node or a valid next hop
      * CLUSTERER_CURR_DISABLED - current node is disabled so
        sending is impossbile
@@ -1091,8 +1106,8 @@ typedef struct clusterer_node {
      * int cluster_id - the cluster id
 
    The function returns one of the following:
-     * CLUSTERER_SEND_SUCCES - successfuly sent packet to at least
-       one node
+     * CLUSTERER_SEND_SUCCESS - successfully sent packet to at
+       least one node
      * CLUSTERER_CURR_DISABLED - current node is disabled so
        sending is impossbile
      * CLUSTERER_DEST_DOWN - all nodes in the cluster are
@@ -1165,10 +1180,10 @@ Chapter 3. Contributors
    Table 3.1. Top contributors by DevScore^(1), authored
    commits^(2) and lines added/removed^(3)
      Name DevScore Commits Lines ++ Lines --
-   1. Vlad Patrascu (@rvlad-patrascu) 252 85 9691 5072
-   2. Eseanu Marius Cristian (@eseanucristian) 45 10 3142 534
-   3. Liviu Chircu (@liviuchircu) 39 28 492 380
-   4. Razvan Crainea (@razvancrainea) 21 15 317 142
+   1. Vlad Patrascu (@rvlad-patrascu) 265 92 10026 5239
+   2. Liviu Chircu (@liviuchircu) 48 35 611 435
+   3. Eseanu Marius Cristian (@eseanucristian) 45 10 3142 534
+   4. Razvan Crainea (@razvancrainea) 23 17 319 143
    5. Bogdan-Andrei Iancu (@bogdan-iancu) 20 9 1116 102
    6. Ionel Cerghit (@ionel-cerghit) 8 2 250 212
    7. Gohar Ahmed (@goharahmed) 3 1 6 5
@@ -1195,9 +1210,9 @@ Chapter 3. Contributors
 
    Table 3.2. Most recently active contributors^(1) to this module
                         Name                     Commit Activity
-   1. Vlad Patrascu (@rvlad-patrascu)          Jul 2016 - Jun 2019
-   2. Liviu Chircu (@liviuchircu)              Mar 2016 - May 2019
-   3. Razvan Crainea (@razvancrainea)          Nov 2015 - May 2019
+   1. Liviu Chircu (@liviuchircu)              Mar 2016 - Nov 2019
+   2. Vlad Patrascu (@rvlad-patrascu)          Jul 2016 - Sep 2019
+   3. Razvan Crainea (@razvancrainea)          Nov 2015 - Sep 2019
    4. Bogdan-Andrei Iancu (@bogdan-iancu)      Apr 2016 - Apr 2019
    5. Gohar Ahmed (@goharahmed)                Mar 2019 - Mar 2019
    6. Fabian Gast (@fgast)                     Nov 2018 - Nov 2018
@@ -1212,10 +1227,11 @@ Chapter 4. Documentation
 
 4.1. Contributors
 
-   Last edited by: Vlad Patrascu (@rvlad-patrascu), Razvan Crainea
-   (@razvancrainea), Bogdan-Andrei Iancu (@bogdan-iancu), Fabian
-   Gast (@fgast), Liviu Chircu (@liviuchircu), Peter Lemenkov
-   (@lemenkov), Eseanu Marius Cristian (@eseanucristian).
+   Last edited by: Liviu Chircu (@liviuchircu), Vlad Patrascu
+   (@rvlad-patrascu), Razvan Crainea (@razvancrainea),
+   Bogdan-Andrei Iancu (@bogdan-iancu), Fabian Gast (@fgast),
+   Peter Lemenkov (@lemenkov), Eseanu Marius Cristian
+   (@eseanucristian).
 
    Documentation Copyrights:
 

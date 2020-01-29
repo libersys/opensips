@@ -151,6 +151,7 @@ static str ei_c_uri_name = str_init("uri");
 static str ei_c_recv_name = str_init("received");
 static str ei_c_path_name = str_init("path");
 static str ei_c_qval_name = str_init("qval");
+static str ei_c_user_agent_name = str_init("user_agent");
 static str ei_c_socket_name = str_init("socket");
 static str ei_c_bflags_name = str_init("bflags");
 static str ei_c_expires_name = str_init("expires");
@@ -169,6 +170,7 @@ static evi_param_p ul_c_uri_param;
 static evi_param_p ul_c_recv_param;
 static evi_param_p ul_c_path_param;
 static evi_param_p ul_c_qval_param;
+static evi_param_p ul_c_user_agent_param;
 static evi_param_p ul_c_socket_param;
 static evi_param_p ul_c_bflags_param;
 static evi_param_p ul_c_expires_param;
@@ -269,6 +271,13 @@ int ul_event_init(void)
 		&ei_c_qval_name);
 	if (!ul_c_qval_param) {
 		LM_ERR("cannot create Qval parameter\n");
+		return -1;
+	}
+
+	ul_c_user_agent_param = evi_param_create(ul_contact_event_params, 
+		&ei_c_user_agent_name);
+	if (!ul_c_user_agent_param) {
+		LM_ERR("cannot create user_agent parameter\n");
 		return -1;
 	}
 
@@ -383,6 +392,12 @@ void ul_raise_contact_event(event_id_t _e, struct ucontact *_c)
 		return;
 	}
 
+	/* the User Agent */
+	if (evi_param_set_str(ul_c_user_agent_param, &_c->user_agent) < 0) {
+		LM_ERR("cannot set user_agent parameter\n");
+		return;
+	}
+
 	/* the socket */
 	if (evi_param_set_str(ul_c_socket_param,
 			(_c->sock ? &_c->sock->sock_str : &str_empty)) < 0) {
@@ -447,11 +462,8 @@ void free_udomain(udomain_t* _d)
 	int i;
 
 	if (_d->table) {
-		for(i = 0; i < _d->size; i++) {
-			lock_ulslot(_d, i);
+		for(i = 0; i < _d->size; i++)
 			deinit_slot(_d->table + i);
-			unlock_ulslot(_d, i);
-		}
 		shm_free(_d->table);
 	}
 	shm_free(_d);
@@ -935,7 +947,7 @@ int preload_udomain(db_con_t* _c, udomain_t* _d)
 				/* update indexes accordingly */
 				sl = r->aorhash&(_d->size-1);
 
-				if (_d->table[sl].next_label < rlabel || _d->table[sl].next_label == 0)
+				if (_d->table[sl].next_label <= rlabel)
 					_d->table[sl].next_label = rlabel + 1;
 
 				if (r->next_clabel <= clabel || r->next_clabel == 0)
@@ -1325,6 +1337,9 @@ have_contacts:
 			       _aor->len, _aor->s, _d->name->s);
 			continue;
 		}
+		/* save also the name of the key, to be used later, during
+		 * the update operation */
+		ci->cdb_key = pair->key.name;
 
 		if (!r)
 			get_static_urecord(_d, _aor, &r);
@@ -1628,7 +1643,7 @@ int cdb_update_urecord_metadata(const str *_aor, int unpublish)
 	val.s.len = _aor->len + sip_addr.len;
 
 	if (unpublish) {
-		if (cdbf.remove(cdbc, &val.s) < 0) {
+		if (cdbf._remove(cdbc, &val.s, &id_key.name) < 0) {
 			LM_ERR("fail to del metadata, AoR %.*s\n", _aor->len, _aor->s);
 			return -1;
 		}
@@ -1677,29 +1692,24 @@ out_err:
 int insert_urecord(udomain_t* _d, str* _aor, struct urecord** _r,
                    char is_replicated)
 {
-	int sl;
-
 	if (have_mem_storage()) {
 		if (mem_insert_urecord(_d, _aor, _r) < 0) {
 			LM_ERR("inserting record failed\n");
 			return -1;
 		}
-		/* make sure it does not overflows 14 bits */
-		(*_r)->next_clabel = (rand()&CLABEL_MASK);
-		sl = (*_r)->aorhash&(_d->size-1);
 
-		(*_r)->label = CID_NEXT_RLABEL(_d, sl);
+		if (!is_replicated) {
+			init_urecord_labels(*_r, _d);
 
-		if (!is_replicated && cluster_mode == CM_FEDERATION_CACHEDB
-		    && cdb_update_urecord_metadata(_aor, 0) != 0) {
-			LM_ERR("failed to publish cachedb location for AoR %.*s\n",
-			       _aor->len, _aor->s);
+			if (cluster_mode == CM_FEDERATION_CACHEDB
+			        && cdb_update_urecord_metadata(_aor, 0) != 0) {
+				LM_ERR("failed to publish cachedb location for AoR %.*s\n",
+				       _aor->len, _aor->s);
+			}
+
+			if (location_cluster)
+				replicate_urecord_insert(*_r);
 		}
-
-		/* TODO: in federation, only replicate to "EQ sip_addr" nodes! */
-		if (!is_replicated && location_cluster)
-			replicate_urecord_insert(*_r);
-
 	} else {
 		get_static_urecord( _d, _aor, _r);
 	}

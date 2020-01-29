@@ -191,6 +191,7 @@ struct module_exports exports= {
 	0,			/* exported pseudo-variables */
 	0,			/* exported transformations */
 	0,			/* additional processes */
+	0,				/* module pre-initialization function */
 	mod_init,		/* module initialization function */
 	0,			/* reply processing function */
 	mod_destroy,
@@ -587,7 +588,7 @@ error:
  * 2) Header names with compact forms will be transformed to
  * compact form
  * 3) Headers which not in whitelist will be removed
- * 4) Unnecessary sdp body codec attributes lower than 98 removed
+ * 4) Unnecessary sdp body codec attributes lower than 96 removed
  */
 static int mc_compact(struct sip_msg* msg, mc_whitelist_p wh_list)
 {
@@ -751,7 +752,7 @@ static int mc_compact_cb(char** buf_p, mc_whitelist_p wh_list, int type, int* ol
 				(buf_cpy++, rtpmap_len++);
 			}
 
-			if (rtpmap_val < 98) {
+			if (rtpmap_val < 96) {
 				msg_total_len += frg->end - frg->begin + 1;
 				frg->next = pkg_malloc(sizeof(body_frag_t));
 				if (!frg->next)

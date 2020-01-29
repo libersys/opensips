@@ -71,6 +71,8 @@ struct rtpp_node {
 #define	TTL_CHANGE_CPROTOVER	"20170313"
 #define	RECORD_CAP				(1<<8)
 #define	RECORD_CPROTOVER		"20071218"
+#define	SUBCOMMAND_CAP			(1<<9)
+#define	SUBCOMMAND_CPROTOVER	"20191015"
 
 #define RTP_CAP(_c) _c ## _CPROTOVER, sizeof(_c ## _CPROTOVER) - 1
 #define SET_CAP(_n, _c) (_n)->capabilities |= (_c ## _CAP)
@@ -134,6 +136,16 @@ typedef struct rtpp_set_param{
         } v;
 } nh_set_param_t;
 
+struct rtpp_dtmf_event {
+	char digit;
+	unsigned int volume;
+	unsigned int duration;
+	unsigned int is_callid;
+	unsigned int stream;
+	str id;
+};
+void rtpproxy_raise_dtmf_event(int sender, void *p);
+
 extern rw_lock_t *nh_lock;
 extern str rtpp_notify_socket;
 extern int rtpp_notify_socket_un;
@@ -142,7 +154,7 @@ extern int detect_rtp_idle;
 extern struct rtpp_set_head ** rtpp_set_list;
 extern struct rtpp_notify_head * rtpp_notify_h;
 int init_rtpp_notify_list();
-void timeout_listener_process(int rank);
+void notification_listener_process(int rank);
 
 /* Functions from nathelper */
 struct rtpp_set *get_rtpp_set(nh_set_param_t *);

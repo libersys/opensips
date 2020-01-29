@@ -61,33 +61,10 @@ static unsigned long count_running_processes(void *x)
 
 int init_multi_proc_support(void)
 {
-	unsigned int proc_no;
-	unsigned int proc_extra_no;
-	unsigned int extra;
-	unsigned int i;
-
-	proc_no = 0;
-	proc_extra_no = 0;
-
-	/* UDP based listeners */
-	proc_no += udp_count_processes( &extra );
-	proc_extra_no += extra;
-
-	/* TCP based listeners */
-	proc_no += tcp_count_processes( &extra );
-	proc_extra_no += extra;
-
-	/* Timer related processes */
-	proc_no += timer_count_processes( &extra );
-	proc_extra_no += extra;
-
-	/* attendent */
-	proc_no++;
-
-	/* count the processes requested by modules */
-	proc_no += count_module_procs(0);
-
-	counted_max_processes = proc_no + proc_extra_no;
+	int i;
+	/* at this point we know exactly the possible number of processes, since
+	 * all the other modules already adjusted their extra numbers */
+	counted_max_processes = count_child_processes();
 
 	/* allocate the PID table to accomodate the maximum possible number of
 	 * process we may have during runtime (covering extra procs created 
@@ -104,6 +81,7 @@ int init_multi_proc_support(void)
 		pt[i].unix_sock = -1;
 		pt[i].pid = -1;
 		pt[i].ipc_pipe[0] = pt[i].ipc_pipe[1] = -1;
+		pt[i].ipc_sync_pipe[0] = pt[i].ipc_sync_pipe[1] = -1;
 	}
 
 	/* create the load-related stats (initially marked as hidden */
@@ -222,6 +200,7 @@ void reset_process_slot( int p_id )
 	pt[p_id].flags = 0;
 
 	pt[p_id].ipc_pipe[0] = pt[p_id].ipc_pipe[1] = -1;
+	pt[p_id].ipc_sync_pipe[0] = pt[p_id].ipc_sync_pipe[1] = -1;
 	pt[p_id].unix_sock = -1;
 
 	pt[p_id].log_level = pt[p_id].default_log_level = 0; /*not really needed*/
@@ -283,12 +262,16 @@ int internal_fork(char *proc_desc, unsigned int flags,
 		/* advertise no IPC to the rest of the procs */
 		pt[new_idx].ipc_pipe[0] = -1;
 		pt[new_idx].ipc_pipe[1] = -1;
+		pt[new_idx].ipc_sync_pipe[0] = -1;
+		pt[new_idx].ipc_sync_pipe[1] = -1;
 		/* NOTE: the IPC fds will remain open in the other processes,
 		 * but they will not be known */
 	} else {
 		/* activate the IPC pipes */
 		pt[new_idx].ipc_pipe[0]=pt[new_idx].ipc_pipe_holder[0];
 		pt[new_idx].ipc_pipe[1]=pt[new_idx].ipc_pipe_holder[1];
+		pt[new_idx].ipc_sync_pipe[0]=pt[new_idx].ipc_sync_pipe_holder[0];
+		pt[new_idx].ipc_sync_pipe[1]=pt[new_idx].ipc_sync_pipe_holder[1];
 	}
 
 	pt[new_idx].pid = 0;
@@ -370,12 +353,49 @@ int count_init_child_processes(void)
 	return ret;
 }
 
+/* counts the number of processes known by OpenSIPS at startup.
+ * Note that the number of processes might change during init, if one of the
+ * module decides that it will no longer use a process (ex; rtpproxy timeout
+ * process)
+ */
+int count_child_processes(void)
+{
+	unsigned int proc_no;
+	unsigned int proc_extra_no;
+	unsigned int extra;
+
+	proc_no = 0;
+	proc_extra_no = 0;
+
+	/* UDP based listeners */
+	proc_no += udp_count_processes( &extra );
+	proc_extra_no += extra;
+
+	/* TCP based listeners */
+	proc_no += tcp_count_processes( &extra );
+	proc_extra_no += extra;
+
+	/* Timer related processes */
+	proc_no += timer_count_processes( &extra );
+	proc_extra_no += extra;
+
+	/* attendent */
+	proc_no++;
+
+	/* count the processes requested by modules */
+	proc_no += count_module_procs(0);
+
+	return proc_no + proc_extra_no;
+}
+
 
 void dynamic_process_final_exit(void)
 {
 	/* prevent any more IPC */
 	pt[process_no].ipc_pipe[0] = -1;
 	pt[process_no].ipc_pipe[1] = -1;
+	pt[process_no].ipc_sync_pipe[0] = -1;
+	pt[process_no].ipc_sync_pipe[1] = -1;
 
 	/* clear the per-process connection from the DB queues */
 	ql_force_process_disconnect(process_no);

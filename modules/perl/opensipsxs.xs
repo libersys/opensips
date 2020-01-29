@@ -47,6 +47,7 @@
 #include "../../dprint.h"
 #include "../../mod_fix.h"
 #include "../../ut.h"
+#include "../../dset.h"
 
 enum xs_uri_members {
 	XS_URI_USER = 0,
@@ -199,8 +200,51 @@ SV *getStringFromURI(SV *self, enum xs_uri_members what) {
 }
 
 
+static int perl_do_action(struct sip_msg* msg, struct action *act,
+    cmd_export_t *cmd, int *retval)
+{
+    void* cmdp[MAX_CMD_PARAMS];
+    pv_value_t tmp_vals[MAX_CMD_PARAMS];
+    int i;
+    struct cmd_param *param;
+    gparam_p gp;
+
+    if (fix_cmd(cmd->params, act->elem) < 0) {
+		LM_ERR("failed to fix command '%s'\n", cmd->name);
+		return -1;
+	}
+
+	if (get_cmd_fixups(msg, cmd->params, act->elem, cmdp, tmp_vals) < 0) {
+		LM_ERR("failed to get fixups for command '%s'\n", cmd->name);
+		return -1;
+	}
+
+	*retval = cmd->function(msg,
+		cmdp[0],cmdp[1],cmdp[2],
+		cmdp[3],cmdp[4],cmdp[5],
+		cmdp[6],cmdp[7]);
+
+	for (param=cmd->params, i=1; param->flags; param++, i++) {
+		gp = (gparam_p)act->elem[i].u.data;
+		if (!gp)
+			continue;
+
+		if (param->free_fixup && param->free_fixup(&cmdp[i-1]) < 0) {
+			LM_ERR("failed to free fixups for command '%s'\n", cmd->name);
+			return -1;
+		}
+
+		if (param->flags & CMD_PARAM_REGEX && gp->type != GPARAM_TYPE_PVS) {
+			regfree((regex_t*)cmdp[i-1]);
+			pkg_free(cmdp[i-1]);
+		}
+	}
+
+    return 0;
+}
+
 /*
- * Calls an exported function. Parameters are copied and fixup'd.
+ * Calls an exported function.
  *
  * Return codes:
  *   -1 - Function not available (or other error).
@@ -216,7 +260,7 @@ int moduleFunc(struct sip_msg *m, char *func, char **pargs, int *retval)
 	int i, n = 0;
 	struct cmd_param *param;
 	str s;
-	pv_spec_t *spec = NULL;
+	pv_spec_t *specs[MAX_CMD_PARAMS];
 	int rval;
 
 	if (!func) {
@@ -231,7 +275,7 @@ int moduleFunc(struct sip_msg *m, char *func, char **pargs, int *retval)
 		return -1;
 	}
 
-	for (i=0; i < MAX_CMD_PARAMS; i++)
+	for (i=0; i < MAX_CMD_PARAMS; i++) {
 		if (pargs[i]) {
 			n++;
 			if (strlen(pargs[i]) == 0)  /* 'undef' argument */ {
@@ -240,6 +284,8 @@ int moduleFunc(struct sip_msg *m, char *func, char **pargs, int *retval)
 			} else
 				elems[i+1].type = NOSUBTYPE;
 		}
+		specs[i] = NULL;
+	}
 
 	rval = check_cmd_call_params(exp_func_struct, elems, n);
 	if (rval == -1 || rval == -2) {
@@ -273,24 +319,24 @@ int moduleFunc(struct sip_msg *m, char *func, char **pargs, int *retval)
 			elems[i].u.data = pargs[i-1];
 		} else if (param->flags & CMD_PARAM_VAR) {
 			elems[i].type = SCRIPTVAR_ST;
-			spec = pkg_malloc(sizeof *spec);
-			if (!spec) {
+			specs[i] = pkg_malloc(sizeof *specs[i]);
+			if (!specs[i]) {
 				LM_ERR("oom\n");
 				*retval = -1;
 				return -1;
 			}
 			s.s = pargs[i-1];
 			s.len = strlen(s.s);
-			if (pv_parse_spec(&s, spec) == NULL) {
+			if (pv_parse_spec(&s, specs[i]) == NULL) {
 				LM_ERR("unknown script variable: %.*s\n", s.len, s.s);
 				*retval = -1;
 				return -1;
 			}
-			elems[i].u.data = spec;
+			elems[i].u.data = specs[i];
 		}
 	}
 
-	act = mk_action(MODULE_T, n+1, elems, 0, "perl");
+	act = mk_action(CMD_T, n+1, elems, 0, "perl");
 
 	if (!act) {
 		LM_ERR("action structure could not be created. Error.\n");
@@ -298,15 +344,13 @@ int moduleFunc(struct sip_msg *m, char *func, char **pargs, int *retval)
 		return -1;
 	}
 
-	if (fix_cmd(exp_func_struct->params, act->elem) < 0) {
-		LM_ERR("failed to fix command '%s'\n", func);
+	if (perl_do_action(m, act, exp_func_struct, retval) < 0) {
 		*retval = -1;
 		return -1;
 	}
 
-	*retval = do_action(act, m);
-
-	pv_spec_free(spec);
+	for (i=0; i < MAX_CMD_PARAMS; i++)
+		pv_spec_free(specs[i]);
 
 	/* free the gparam_t structs allocated by fix_cmd() */
 	for (i=1; i < MAX_ACTION_ELEMS; i++)
@@ -322,22 +366,18 @@ int moduleFunc(struct sip_msg *m, char *func, char **pargs, int *retval)
 /**
  * Rewrite Request-URI
  */
-static inline int rewrite_ruri(struct sip_msg* _m, char* _s)
+static inline int rw_ruri(struct sip_msg* _m, char* _s)
 {
-	struct action act;
+	str s;
 
-	memset(&act, 0, sizeof(act));
-	act.type = SET_URI_T;
-	act.elem[0].type = STR_ST;
-	act.elem[0].u.s.s = _s;
-	act.elem[0].u.s.len = strlen(_s);
-	act.next = 0;
-	
-	if (do_action(&act, _m) < 0)
-	{
-		LM_ERR("rewrite_ruri: Error in do_action\n");
+	s.s = _s;
+	s.len = strlen(_s);
+
+	if (set_ruri(_m, &s) < 0) {
+		LM_ERR("Error setting RURI\n");
 		return -1;
 	}
+
 	return 0;
 }
 
@@ -966,7 +1006,7 @@ rewrite_ruri(self, newruri)
 			RETVAL = -1;
 		} else {
 			LM_DBG("New R-URI is [%s]\n", newruri);
-			RETVAL = rewrite_ruri(msg, newruri);
+			RETVAL = rw_ruri(msg, newruri);
 		}
 	}
   OUTPUT:
@@ -1095,55 +1135,37 @@ append_branch(self, branch = NULL, qval = NULL)
 	qvalue_t q;
 	int err = 0;
 	struct action *act = NULL;
+	str branch_s;
   INIT:
   CODE:
   	if (!msg) {
 		LM_ERR("Invalid message reference\n");
 		RETVAL = -1;
 	} else {
+		RETVAL = 1;
 		if (qval) {
 			if (str2q(&q, qval, strlen(qval)) < 0) {
 				LM_ERR("append_branch: Bad q value.\n");
+				RETVAL = -1;
 			} else { /* branch and qval set */
-				elems[0].type = STR_ST;
-				elems[0].u.data = branch;
-				elems[1].type = NUMBER_ST;
-				elems[1].u.data = (void *)(long)q;
-				act = mk_action(APPEND_BRANCH_T,
-						2,
-						elems,
-						0,
-						"perl");
+				branch_s.s = branch;
+				branch_s.len = strlen(branch);
 			}
 		} else {
 			if (branch) { /* branch set, qval unset */
-				elems[0].type = STR_ST;
-				elems[0].u.data = branch;
-				elems[1].type = NUMBER_ST;
-				elems[1].u.data = (void *)Q_UNSPECIFIED;
-				act = mk_action(APPEND_BRANCH_T,
-						2,
-						elems,
-						0,
-						"perl");
+				branch_s.s = branch;
+				branch_s.len = strlen(branch);
+				q = Q_UNSPECIFIED;
 			} else { /* neither branch nor qval set */
-				elems[0].type = STR_ST;
-				elems[0].u.data = NULL;
-				elems[1].type = NUMBER_ST;
-				elems[1].u.data = (void *)Q_UNSPECIFIED;
-				act = mk_action(APPEND_BRANCH_T,
-						2,
-						elems,
-						0,
-						"perl");
+				q = Q_UNSPECIFIED;
+				branch_s.s = NULL;
 			}
 		}
 
-		if (act) {
-			RETVAL = do_action(act, msg);
-		} else {
-			RETVAL = -1;
-		}
+		if (RETVAL != -1)
+			RETVAL = append_branch(msg, branch_s.s ? &branch_s : NULL,
+						&msg->dst_uri, &msg->path_vec, q, getb0flags(msg),
+						msg->force_send_socket);
 	}
   OUTPUT:
 	RETVAL

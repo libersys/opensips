@@ -1,4 +1,4 @@
-%if 0%{?rhel}
+%if 0%{?rhel} > 0 && 0%{?rhel} < 8
 # copied from lm_sensors exclusive arch
 %ifnarch alpha i386 i486 i586 i686 pentium3 pentium4 athlon x86_64
 %global _without_snmpstats 1
@@ -17,8 +17,12 @@
 %global _with_cachedb_mongodb 1
 %endif
 
-%if 0%{?fedora} > 23
+%if 0%{?rhel} > 7 || 0%{?fedora} > 23
 %global _without_aaa_radius 1
+%endif
+
+%if 0%{?rhel} > 7
+%global _with_python3 1
 %endif
 
 %global EXCLUDE_MODULES %{!?_with_cachedb_cassandra:cachedb_cassandra} %{!?_with_cachedb_couchbase:cachedb_couchbase} %{!?_with_cachedb_mongodb:cachedb_mongodb} %{!?_with_cachedb_redis:cachedb_redis} %{!?_with_db_oracle:db_oracle} %{!?_with_osp:osp} %{!?_with_sngtc:sngtc} %{?_without_aaa_radius:aaa_radius} %{?_without_db_perlvdb:db_perlvdb} %{?_without_snmpstats:snmpstats}
@@ -48,7 +52,7 @@ BuildRequires:  openssl-devel
 BuildRequires:  expat-devel
 BuildRequires:  xmlrpc-c-devel
 BuildRequires:  libconfuse-devel
-%if 0%{?rhel}
+%if 0%{?rhel} > 0 && 0%{?rhel} < 8
 BuildRequires:  db4-devel
 %else
 BuildRequires:  libdb-devel
@@ -58,7 +62,11 @@ BuildRequires:  curl-devel
 # BuildRequires:  GeoIP-devel
 BuildRequires:  libmaxminddb-devel
 BuildRequires:  pcre-devel
+%if 0%{?_with_python3:1}
+BuildRequires:  python3-devel
+%else
 BuildRequires:  python-devel
+%endif
 %if 0%{?fedora} > 16 || 0%{?rhel} > 6
 BuildRequires:  systemd-units
 %endif
@@ -353,7 +361,7 @@ directory.
 Summary:  Lua extensions for OpenSIPS
 Group:    System Environment/Daemons
 Requires: %{name} = %{version}-%{release}
-%if 0%{?fedora} > 0
+%if 0%{?rhel} > 7 || 0%{?fedora} > 0
 BuildRequires: compat-lua-devel
 %else
 BuildRequires: lua-devel
@@ -450,7 +458,7 @@ Summary:  Perl extensions and database driver for OpenSIPS
 Group:    System Environment/Daemons
 # require perl-devel for >F7 and perl for <=F6
 BuildRequires:  perl(ExtUtils::MakeMaker)
-%if 0%{?rhel}
+%if 0%{?rhel} > 0 && 0%{?rhel} < 8
 BuildRequires:  perl(ExtUtils::Embed)
 %else
 %if 0%{?rhel} == 5
@@ -656,6 +664,21 @@ per second even on low-budget hardware.
 .
 This package provides the SQLite database driver for OpenSIPS.
 
+%package  stir-shaken-module
+Summary:  STIR/SHAKEN support for OpenSIPS
+Group:    System Environment/Daemons
+Requires: %{name} = %{version}-%{release}
+Requires: openssl
+BuildRequires: openssl-devel
+
+%description  stir-shaken-module
+OpenSIPS is a very fast and flexible SIP (RFC3261)
+server. Written entirely in C, OpenSIPS can handle thousands calls
+per second even on low-budget hardware.
+.
+This module adds support for implementing STIR/SHAKEN (RFC 8224, RFC 8588)
+Authentication and Verification services in OpenSIPS.
+
 %package  tls-module
 Summary:  TLS transport module for OpenSIPS
 Group:    System Environment/Daemons
@@ -696,7 +719,7 @@ per second even on low-budget hardware.
 This package provides the unixODBC database driver for OpenSIPS.
 
 %package  uuid-module
-Summary:  UUID (Universally Unique Identifier) generator
+Summary:  UUID (Universally Unique Identifier) generator for OpenSIPS
 Group:    System Environment/Daemons
 Requires: %{name} = %{version}-%{release}
 
@@ -705,7 +728,7 @@ OpenSIPS is a very fast and flexible SIP (RFC3261)
 server. Written entirely in C, OpenSIPS can handle thousands calls
 per second even on low-budget hardware.
 .
-This package provides the a UUID generated for OpenSIPS script.
+This package provides a UUID generator for the OpenSIPS script.
 
 %package  wss-module
 Summary:  WebSocket Secure (WSS) transport module for OpenSIPS
@@ -766,7 +789,7 @@ This package provides the SIP to XMPP IM translator module for OpenSIPS.
 %setup -q -n %{name}-%{version}
 
 %build
-LOCALBASE=/usr NICER=0 CFLAGS="%{optflags}" %{?_with_db_oracle:ORAHOME="$ORACLE_HOME"} %{__make} all %{?_smp_mflags} TLS=1 \
+LOCALBASE=/usr NICER=0 CFLAGS="%{optflags}" %{?_with_python3:PYTHON=python3} %{?_with_db_oracle:ORAHOME="$ORACLE_HOME"} %{__make} all %{?_smp_mflags} TLS=1 \
   exclude_modules="%EXCLUDE_MODULES" \
   cfg_target=%{_sysconfdir}/opensips/ \
   modules_prefix=%{buildroot}%{_prefix} \
@@ -778,6 +801,7 @@ rm -rf $RPM_BUILD_ROOT
   exclude_modules="%EXCLUDE_MODULES" \
   basedir=%{buildroot} prefix=%{_prefix} \
   cfg_prefix=%{buildroot} \
+  cfg_target=%{_sysconfdir}/opensips/ \
   modules_prefix=%{buildroot}/%{_prefix} \
   modules_dir=%{_lib}/%{name}/modules \
   DBTEXTON=yes # fixed dbtext documentation installation
@@ -1256,6 +1280,8 @@ fi
 %doc docdir/README.presence_callinfo
 %{_libdir}/opensips/modules/presence_dialoginfo.so
 %doc docdir/README.presence_dialoginfo
+%{_libdir}/opensips/modules/presence_dfks.so
+%doc docdir/README.presence_dfks
 %{_libdir}/opensips/modules/presence_mwi.so
 %doc docdir/README.presence_mwi
 %{_libdir}/opensips/modules/presence_xcapdiff.so
@@ -1347,6 +1373,10 @@ fi
 %dir %{_datadir}/opensips/sqlite
 %{_datadir}/opensips/sqlite/*.sql
 
+%files stir-shaken-module
+%{_libdir}/opensips/modules/stir_shaken.so
+%doc docdir/README.stir_shaken
+
 %files tls-module
 %{_libdir}/opensips/modules/proto_tls.so
 %doc docdir/README.proto_tls
@@ -1381,7 +1411,11 @@ fi
 
 
 %changelog
-* Tue Apr 16 2019 Razvan Crainea <razvan@opensips.org> - 3.1.0-1
+* Tue Nov 19 2019 Nick Altmann <nick.altmann@gmail.com> - 3.1.0-3
+- Specification updated for opensips 3.1
+- New package: stir-shaken-module
+
+* Tue Apr 16 2019 Razvan Crainea <razvan@opensips.org> - 3.1.0-2
 - Remove osipsconsole
 
 * Thu Apr 11 2019 Nick Altmann <nick.altmann@gmail.com> - 3.1.0-1

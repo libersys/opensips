@@ -201,6 +201,7 @@ void clean_head_cache(struct head_cache *c);
 void init_head_db(struct head_db *new);
 static int db_load_head(struct head_db*); /* used for populating head_db with
 											 db connections and db funcs */
+static char *extra_prefix_chars;
 
 
 /* reader-writers lock for reloading the data */
@@ -428,10 +429,11 @@ static param_export_t params[] = {
 	{"probing_reply_codes",STR_PARAM, &dr_probe_replies.s     },
 	{"persistent_state", INT_PARAM, &dr_persistent_state      },
 	{"no_concurrent_reload",INT_PARAM, &no_concurrent_reload  },
-	{"partition_id_pvar", STR_PARAM, &partition_pvar.s},
-	{"cluster_id",        INT_PARAM, &dr_cluster_id },
-	{"cluster_sharing_tag",STR_PARAM, &dr_cluster_shtag },
-	{"enable_restart_persistency",INT_PARAM, &dr_rpm_enable },
+	{"partition_id_pvar", STR_PARAM, &partition_pvar.s        },
+	{"cluster_id",        INT_PARAM, &dr_cluster_id           },
+	{"cluster_sharing_tag",STR_PARAM, &dr_cluster_shtag       },
+	{"enable_restart_persistency",INT_PARAM, &dr_rpm_enable   },
+	{"extra_prefix_chars", STR_PARAM, &extra_prefix_chars     },
 	{0, 0, 0}
 };
 
@@ -537,6 +539,7 @@ struct module_exports exports = {
 	0,               /* exported pseudo-variables */
 	0,			 	 /* exported transformations */
 	0,               /* additional processes */
+	0,               /* Module pre-initialization function */
 	dr_init,         /* Module initialization function */
 	(response_function) 0,
 	(destroy_function) dr_exit,
@@ -1472,6 +1475,11 @@ static int dr_init(void)
 
 	update_cache_info();
 
+	if (init_prefix_tree( extra_prefix_chars )!=0) {
+		LM_ERR("failed to initiate the prefix array\n");
+		goto error;
+	}
+
 	drg_user_col.len = strlen(drg_user_col.s);
 	drg_domain_col.len = strlen(drg_domain_col.s);
 	drg_grpid_col.len = strlen(drg_grpid_col.s);
@@ -1709,7 +1717,7 @@ static int dr_init(void)
 	}
 	/* all good now - release the config */
 	cleanup_head_config_table();
-	
+
 	/* free last head if left uninitialized */
 	if (db_part) {
 		cleanup_head_db(db_part);
@@ -1852,11 +1860,11 @@ static int dr_child_init(int rank)
 	struct head_db *head_db_it = head_db_start;
 
 	/* We need DB connection from:
-	 *   - attendant - for shutdown, flushingmstate
+	 *   - attendant - for shutdown, flushing state
 	 *   - timer - may trigger routes with dr group
 	 *   - workers - execute routes with dr group
 	 *   - module's proc - ??? */
-	if (rank==PROC_TCP_MAIN || rank==PROC_BIN)
+	if (rank==PROC_TCP_MAIN)
 		return 0;
 
 	LM_DBG("Child initialization on rank %d \n",rank);
@@ -1970,6 +1978,9 @@ mi_response_t *dr_reload_cmd(const mi_params_t *params,
 		return init_mi_error(500, MI_SSTR("Failed to reload"));
 	}
 
+	if (dr_cluster_id && dr_cluster_sync() < 0)
+		return init_mi_error(500, MI_SSTR("Failed to synchronize states from cluster"));
+
 	return init_mi_result_ok();
 }
 
@@ -1989,6 +2000,9 @@ mi_response_t *dr_reload_cmd_1(const mi_params_t *params,
 		LM_CRIT("Failed to load data head\n");
 		return init_mi_error(500, MI_SSTR("Failed to reload"));
 	}
+
+	if (dr_cluster_id && dr_cluster_sync() < 0)
+		return init_mi_error(500, MI_SSTR("Failed to synchronize from cluster"));
 
 	return init_mi_result_ok();
 }
@@ -2367,12 +2381,27 @@ fallback_failed:
 }
 
 
-#define DR_MAX_GWLIST	64
+#define resize_dr_sort_buffer( _buf, _old_size, _new_size, _error) \
+	do { \
+		if (_new_size > _old_size) { \
+			/* need a larger buffer */ \
+			_buf = (unsigned short*)pkg_realloc( _buf, \
+				_new_size *sizeof(unsigned short) ); \
+			if (_buf==NULL) { \
+				LM_ERR("no more pkg mem (needed  %ld)\n", \
+					_new_size*sizeof(unsigned short));\
+				_old_size = 0; \
+				goto _error;\
+			}\
+			_old_size = _new_size; \
+		} \
+	}while(0) \
 
 static int sort_rt_dst(pgw_list_t *pgwl, unsigned short size,
 		int weight, unsigned short *idx)
 {
-	unsigned short running_sum[DR_MAX_GWLIST];
+	static unsigned short *running_sum = NULL;
+	static unsigned short sum_buf_size = 0;
 	unsigned int i, first, weight_sum, rand_no;
 
 	/* populate the index array */
@@ -2383,6 +2412,7 @@ static int sort_rt_dst(pgw_list_t *pgwl, unsigned short size,
 		return 0;
 
 	while (size-first>1) {
+		resize_dr_sort_buffer( running_sum, sum_buf_size, size, err);
 		/* calculate the running sum */
 		for( i=first,weight_sum=0 ; i<size ; i++ ) {
 			weight_sum += pgwl[ idx[i] ].weight ;
@@ -2399,7 +2429,7 @@ static int sort_rt_dst(pgw_list_t *pgwl, unsigned short size,
 				if (running_sum[i]>rand_no) break;
 			if (i==size) {
 				LM_CRIT("bug in weight sort\n");
-				return -1;
+				goto err;
 			}
 		} else {
 			/* randomly select index */
@@ -2417,6 +2447,8 @@ static int sort_rt_dst(pgw_list_t *pgwl, unsigned short size,
 	}
 
 	return 0;
+err:
+	return -1;
 }
 
 
@@ -2568,8 +2600,10 @@ struct head_db * get_partition(const str *name)
 static int do_routing(struct sip_msg* msg, struct head_db *part, int grp,
 													int flags, str* whitelist)
 {
-	unsigned short dsts_idx[DR_MAX_GWLIST];
-	unsigned short carrier_idx[DR_MAX_GWLIST];
+	static unsigned short *dsts_idx = NULL;
+	static unsigned short dsts_idx_size = 0;
+	static unsigned short *carrier_idx = NULL;
+	static unsigned short carrier_idx_size = 0;
 	struct to_body  *from;
 	struct sip_uri  uri;
 	rt_info_t  *rt_info;
@@ -2582,7 +2616,7 @@ static int do_routing(struct sip_msg* msg, struct head_db *part, int grp,
 	struct head_db *current_partition=NULL;
 	unsigned short wl_len;
 	str username;
-	int i, j, n;
+	int i, j, n, rt_idx;
 	int_str val;
 	str ruri;
 	str next_carrier_attrs = {NULL, 0};
@@ -2596,28 +2630,27 @@ static int do_routing(struct sip_msg* msg, struct head_db *part, int grp,
 	wl_list = NULL;
 	rt_info = NULL;
 
-	if (use_partitions) {
-		if (part==NULL) {   /* WILDCARD partition */
-			for (current_partition = head_db_start;
-			current_partition; current_partition = current_partition->next) {
-				ret=do_routing( msg, part, grp, flags, whitelist);
-				if (ret > 0) {
-					if (partition_pvar.s) {
-						pv_val.rs = current_partition->partition;
-						pv_val.flags = PV_VAL_STR;
-						if (pv_set_value(msg, &partition_spec, 0, &pv_val) != 0) {
-							LM_ERR("cannot print the PV-formatted"
-									" partition string\n");
-							return -1;
-						}
+	if (use_partitions && part==NULL) {
+		/* WILDCARD partition */
+		for (current_partition = head_db_start;
+		current_partition; current_partition = current_partition->next) {
+			ret=do_routing( msg, current_partition, grp, flags, whitelist);
+			if (ret > 0) {
+				if (partition_pvar.s) {
+					pv_val.rs = current_partition->partition;
+					pv_val.flags = PV_VAL_STR;
+					if (pv_set_value(msg, &partition_spec, 0, &pv_val) != 0) {
+						LM_ERR("cannot print the PV-formatted"
+								" partition string\n");
+						return -1;
 					}
-					break;
 				}
+				break;
 			}
-
-			/* ret must be less than 0 here if nothing found */
-			return ret;
 		}
+
+		/* ret must be less than 0 here if nothing found */
+		return ret;
 	} else {
 		current_partition = part;
 	}
@@ -2772,12 +2805,13 @@ search_again:
 		rule_idx = 0;
 	}
 
-	if (rt_info->route_idx>0 && rt_info->route_idx<RT_NO) {
-		fret = run_top_route( sroutes->request[rt_info->route_idx].a, msg );
+	if (rt_info->route_idx && (rt_idx=get_script_route_ID_by_name
+	(rt_info->route_idx, sroutes->request, RT_NO))!=-1) {
+		fret = run_top_route( sroutes->request[rt_idx].a, msg );
 		if (fret&ACT_FL_DROP) {
 			/* drop the action */
 			LM_DBG("script route %s drops routing "
-				"by %d\n", sroutes->request[rt_info->route_idx].name, fret);
+				"by %d\n", sroutes->request[rt_idx].name, fret);
 			goto error2;
 		}
 	}
@@ -2803,6 +2837,7 @@ search_again:
 	}
 
 	/* sort the destination elements in the rule */
+	resize_dr_sort_buffer( dsts_idx, dsts_idx_size, rt_info->pgwa_len, error2);
 	i = sort_rt_dst(rt_info->pgwl, rt_info->pgwa_len,
 			flags&DR_PARAM_USE_WEIGTH, dsts_idx);
 	if (i!=0) {
@@ -2842,6 +2877,8 @@ search_again:
 				continue;
 
 			/* sort the gws of the carrier */
+			resize_dr_sort_buffer( carrier_idx, carrier_idx_size,
+				dst->dst.carrier->pgwa_len, skip);
 			j = sort_rt_dst(dst->dst.carrier->pgwl, dst->dst.carrier->pgwa_len,
 					dst->dst.carrier->flags&DR_CR_FLAG_WEIGHT, carrier_idx);
 			if (j!=0) {
@@ -2882,6 +2919,8 @@ search_again:
 				}
 
 			}
+			skip:
+			;
 
 		} else {
 
@@ -3067,7 +3106,8 @@ error1:
 static int route2_carrier(struct sip_msg* msg, str* ids,
 				pv_spec_t* gw_att, pv_spec_t* carr_att, struct head_db *part)
 {
-	unsigned short carrier_idx[DR_MAX_GWLIST];
+	static unsigned short *carrier_idx;
+	static unsigned short carrier_idx_size;
 	struct sip_uri  uri;
 	pgw_list_t *cdst;
 	pcr_t *cr;
@@ -3171,6 +3211,8 @@ static int route2_carrier(struct sip_msg* msg, str* ids,
 			continue;
 
 		/* sort the gws of the carrier */
+		resize_dr_sort_buffer( carrier_idx, carrier_idx_size,
+			cr->pgwa_len, skip);
 		j = sort_rt_dst( cr->pgwl, cr->pgwa_len, cr->flags&DR_CR_FLAG_WEIGHT,
 				carrier_idx);
 		if (j!=0) {
@@ -3210,6 +3252,9 @@ static int route2_carrier(struct sip_msg* msg, str* ids,
 			}
 
 		}
+
+		skip:
+		;
 
 	}
 
@@ -3482,38 +3527,22 @@ static int fix_gw_flags(void** param)
 
 static int strip_username(struct sip_msg* msg, int strip)
 {
-	struct action act;
-
-	/* initialize all the act fields */
-	memset(&act, 0, sizeof(act));
-	act.type = STRIP_T;
-	act.elem[0].type = NUMBER_ST;
-	act.elem[0].u.number = strip;
-	act.next = 0;
-
-	if (do_action(&act, msg) < 0) {
-		LM_ERR( "Error in do_action\n");
+	if (rewrite_ruri(msg, NULL, strip, RW_RURI_STRIP) < 0) {
+		LM_ERR("error while stripping host\n");
 		return -1;
 	}
+
 	return 0;
 }
 
 
 static int prefix_username(struct sip_msg* msg, str *pri)
 {
-	struct action act;
-
-	/* initialize all the act fields */
-	memset(&act, 0, sizeof(act));
-	act.type = PREFIX_T;
-	act.elem[0].type = STR_ST;
-	act.elem[0].u.s = *pri;
-	act.next = 0;
-
-	if (do_action(&act, msg) < 0) {
-		LM_ERR( "Error in do_action\n");
+	if (rewrite_ruri(msg, pri, 0, RW_RURI_PREFIX) < 0) {
+		LM_ERR("error while setting prefix\n");
 		return -1;
 	}
+
 	return 0;
 }
 
@@ -3810,12 +3839,19 @@ static mi_response_t *mi_dr_list_gw(struct head_db *current_partition,
 	if (!resp)
 		return 0;
 
+	if (gw->attrs.s != NULL && gw->attrs.len > 0)
+		if (add_mi_string(resp_obj, MI_SSTR("ATTRS"),
+			gw->attrs.s,gw->attrs.len) < 0)
+			goto error;
+
 	if (mi_dr_print_gw_state(gw, resp_obj) < 0) {
-		free_mi_response(resp);
-		return 0;
+		goto error;
 	}
 
 	return resp;
+error:
+	free_mi_response(resp);
+	return 0;
 }
 
 static mi_response_t *mi_dr_list_all_gw(struct head_db *current_partition)
@@ -3860,6 +3896,10 @@ static mi_response_t *mi_dr_list_all_gw(struct head_db *current_partition)
 			goto error;
 		if (add_mi_string(gw_item, MI_SSTR("IP"), gw->ip_str.s, gw->ip_str.len) < 0)
 			goto error;
+		if (gw->attrs.s != NULL && gw->attrs.len > 0)
+			if (add_mi_string(gw_item, MI_SSTR("ATTRS"),
+				gw->attrs.s,gw->attrs.len) < 0)
+				goto error;
 		if (mi_dr_print_gw_state(gw, gw_item) < 0)
 			goto error;
 	}
@@ -4010,13 +4050,20 @@ static mi_response_t *mi_dr_list_cr(struct head_db *current_partition,
 	if (!resp)
 		return 0;
 
+	if (cr->attrs.s != NULL && cr->attrs.len > 0)
+		if (add_mi_string(resp_obj, MI_SSTR("ATTRS"),
+			cr->attrs.s,cr->attrs.len) < 0)
+			goto error;
+
 	if (add_mi_string(resp_obj, MI_SSTR("Enabled"),
 		MI_SSTR((cr->flags&DR_CR_FLAG_IS_OFF) ? "no " : "yes")) < 0) {
-		free_mi_response(resp);
-		return 0;
+		goto error;
 	}
 
 	return resp;
+error:
+	free_mi_response(resp);
+	return 0;
 }
 
 static mi_response_t *mi_dr_list_all_cr(struct head_db *current_partition)
@@ -4059,6 +4106,11 @@ static mi_response_t *mi_dr_list_all_cr(struct head_db *current_partition)
 
 		if (add_mi_string(cr_item, MI_SSTR("ID"), cr->id.s, cr->id.len) < 0)
 			goto error;
+
+		if (cr->attrs.s != NULL && cr->attrs.len > 0)
+			if (add_mi_string(cr_item, MI_SSTR("ATTRS"),
+				cr->attrs.s,cr->attrs.len) < 0)
+				goto error;
 
 		if (add_mi_string(cr_item, MI_SSTR("Enabled"),
 			MI_SSTR((cr->flags&DR_CR_FLAG_IS_OFF) ? "no " : "yes")) < 0)

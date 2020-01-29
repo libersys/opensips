@@ -116,6 +116,8 @@ struct module_exports exports= {
 	NULL,
 	/* extra processes */
 	NULL,
+	/* module pre-initialization function */
+	NULL,
 	/* module initialization function */
 	mod_init,
 	/* response handling function */
@@ -146,7 +148,7 @@ static evi_export_t evi_backend_ebr = {
 	/* function for printing an EBR socket */
 	ebr_print,
 	/* super flags for unknown purposes :D */
-	(1<<25)
+	(1<<22)
 };
 
 

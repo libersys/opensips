@@ -90,7 +90,7 @@ static cmd_export_t cmds[]={
 };
 
 static param_export_t params[]={
-	{"server_address",		STR_PARAM,	&server_address	},
+	{"server_address",		STR_PARAM,	&server_address.s},
 	{"presence_server",		STR_PARAM,	&presence_server},
 	{0,						0,			0				}
 };
@@ -114,7 +114,7 @@ struct module_exports exports= {
 	MODULE_VERSION,
 	DEFAULT_DLFLAGS,			/* dlopen flags */
 	0,							/* load function */
-	&deps,                      /* OpenSIPS module dependencies */
+	&deps,						/* OpenSIPS module dependencies */
 	cmds,						/* exported functions */
 	0,							/* exported async functions */
 	params,						/* exported  parameters */
@@ -123,6 +123,7 @@ struct module_exports exports= {
 	0,							/* exported pseudo-variables */
 	0,							/* exported transformations */
 	0,							/* extra processes */
+	0,							/* module pre-initialization function */
 	mod_init,					/* module initialization function */
 	(response_function) 0,		/* response handling function */
 	(destroy_function) 0,		/* destroy function */

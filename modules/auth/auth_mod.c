@@ -121,11 +121,11 @@ int disable_nonce_check = 0;
 static cmd_export_t cmds[] = {
 	{"www_challenge", (cmd_function)www_challenge, {
 		{CMD_PARAM_STR,0,0},
-		{CMD_PARAM_INT,0,0}, {0,0,0}},
+		{CMD_PARAM_STR|CMD_PARAM_OPT,fixup_qop,0}, {0,0,0}},
 		REQUEST_ROUTE},
 	{"proxy_challenge", (cmd_function)proxy_challenge, {
 		{CMD_PARAM_STR,0,0},
-		{CMD_PARAM_INT,0,0}, {0,0,0}},
+		{CMD_PARAM_STR|CMD_PARAM_OPT,fixup_qop,0}, {0,0,0}},
 		REQUEST_ROUTE},
 	{"pv_www_authorize",    (cmd_function)pv_www_authorize, {
 		{CMD_PARAM_STR,0,0}, {0,0,0}},
@@ -190,6 +190,7 @@ struct module_exports exports = {
 	0,          /* exported pseudo-variables */
 	0,			/* exported transformations */
 	0,          /* extra processes */
+	0,          /* module pre-initialization function */
 	mod_init,   /* module initialization function */
 	0,          /* response function */
 	destroy,    /* destroy function */
@@ -427,6 +428,7 @@ static inline int pv_authorize(struct sip_msg* msg, str *domain,
 	int res;
 	struct hdr_field* h;
 	auth_body_t* cred;
+	str msg_body;
 	auth_result_t ret;
 
 	if (domain->len==0)
@@ -452,8 +454,15 @@ static inline int pv_authorize(struct sip_msg* msg, str *domain,
 		return USER_UNKNOWN;
 	}
 
+	if (cred->digest.qop.qop_parsed == QOP_AUTHINT_D &&
+		get_body(msg, &msg_body) < 0) {
+		LM_ERR("Failed to get body of SIP message\n");
+		return ERROR;
+	}
+
 	/* Recalculate response, it must be same to authorize successfully */
-	if (!check_response(&(cred->digest),&msg->first_line.u.request.method,ha1))
+	if (!check_response(&(cred->digest),&msg->first_line.u.request.method,
+		&msg_body,ha1))
 	{
 		return post_auth(msg, h);
 	}

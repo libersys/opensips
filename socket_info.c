@@ -61,9 +61,11 @@
 
 #ifdef __OS_linux
 #include <features.h>     /* for GLIBC version testing */
-#if defined(__GLIBC_PREREQ) && __GLIBC_PREREQ(2, 4)
+#if defined(__GLIBC_PREREQ)
+#if __GLIBC_PREREQ(2, 4)
 #include <ifaddrs.h>
 #define HAVE_IFADDRS
+#endif
 #endif
 #endif
 
@@ -435,7 +437,7 @@ int expand_interface(struct socket_info *si, struct socket_info** list)
 			sid.flags = si->flags;
 			if (it->ifa_flags & IFF_LOOPBACK)
 				sid.flags |= SI_IS_LO;
-			if (new_sock2list( &sid, list)!=0){
+			if (new_sock2list(&sid, list) != 0) {
 				LM_ERR("clone_sock2list failed\n");
 				goto end;
 			}
@@ -533,7 +535,7 @@ end:
 			if (ifrcopy.ifr_flags & IFF_LOOPBACK)
 				sid.flags|=SI_IS_LO;
 			/* add it to one of the lists */
-			if (new_sock2list( &si, list)!=0){
+			if (new_sock2list(&sid, list) != 0) {
 				LM_ERR("clone_sock2list failed\n");
 				goto error;
 			}
@@ -559,6 +561,8 @@ error:
 }
 
 
+#define STR_IMATCH(str, buf) ((str).len==strlen(buf) && strncasecmp(buf, (str).s, (str).len)==0)
+
 /* fixes a socket list => resolve addresses,
  * interface names, fills missing members, remove duplicates */
 int fix_socket_list(struct socket_info **list)
@@ -576,6 +580,13 @@ int fix_socket_list(struct socket_info **list)
 
 	for (si=*list;si;){
 		next=si->next;
+		// fix the SI_IS_LO flag for sockets specified by IP/hostname as expand_interface
+		// below will only do it for sockets specified using the network interface name
+		if (STR_IMATCH(si->name, "localhost") ||
+			STR_IMATCH(si->name, "127.0.0.1") ||
+			STR_IMATCH(si->name, "0:0:0:0:0:0:0:1") || STR_IMATCH(si->name, "::1")) {
+			si->flags |= SI_IS_LO;
+		}
 		if (expand_interface(si, list)!=-1){
 			/* success => remove current entry (shift the entire array)*/
 			sock_listrm(list, si);

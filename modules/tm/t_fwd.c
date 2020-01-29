@@ -621,8 +621,12 @@ void cancel_invite(struct sip_msg *cancel_msg,
 
 	get_cancel_reason(cancel_msg, t_cancel->flags, &reason);
 
+	LOCK_REPLIES(t_invite);
+	/* we need to check which branches should be canceled under lock to avoid
+	 * concurrency with replies that are coming in the same time */
 	/* generate local cancels for all branches */
 	which_cancel(t_invite, &cancel_bitmap );
+	UNLOCK_REPLIES(t_invite);
 
 	set_cancel_extra_hdrs( reason.s, reason.len);
 	cancel_uacs(t_invite, cancel_bitmap );
@@ -1009,7 +1013,7 @@ int t_inject_branch( struct cell *t, struct sip_msg *msg, int flags)
 		return -2;
 	}
 
-	if (!fake_req( &faked_req, t->uas.request, &t->uas, NULL, 0)) {
+	if (!fake_req( &faked_req, t->uas.request, &t->uas, NULL)) {
 		LM_ERR("fake_req failed\n");
 		return -1;
 	}

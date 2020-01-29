@@ -158,7 +158,7 @@ if (  (*tmp==(firstchar) || *tmp==((firstchar) | 32)) &&                  \
 (((m)->new_uri.s && (m)->new_uri.len) ? (&(m)->new_uri) : (&(m)->first_line.u.request.uri))
 
 
-enum _uri_type{ERROR_URI_T=0, SIP_URI_T, SIPS_URI_T, TEL_URI_T, TELS_URI_T, URN_SERVICE_URI_T};
+enum _uri_type{ERROR_URI_T=0, SIP_URI_T, SIPS_URI_T, TEL_URI_T, TELS_URI_T, URN_SERVICE_URI_T, URN_NENA_SERVICE_URI_T};
 typedef enum _uri_type uri_type;
 
 struct sip_uri {
@@ -337,6 +337,8 @@ char* get_hdr_field(char* buf, char* end, struct hdr_field* hdr);
 
 void free_sip_msg(struct sip_msg* msg);
 
+int clone_headers(struct sip_msg *from_msg, struct sip_msg *to_msg);
+
 /* make sure all HFs needed for transaction identification have been
    parsed; return 0 if those HFs can't be found
  */
@@ -476,6 +478,27 @@ int set_ruri(struct sip_msg* msg, str* uri);
 int set_dst_uri(struct sip_msg* msg, str* uri);
 
 
+void reset_dst_uri(struct sip_msg *msg);
+
+
+int set_dst_host_port(struct sip_msg *msg, str *host, str *port);
+
+
+enum rw_ruri_part {
+	RW_RURI_HOST = 1,
+	RW_RURI_HOSTPORT,
+	RW_RURI_USER,
+	RW_RURI_USERPASS,
+	RW_RURI_PORT,
+	RW_RURI_PREFIX,
+	RW_RURI_STRIP,
+	RW_RURI_STRIP_TAIL
+};
+
+int rewrite_ruri(struct sip_msg *msg, str *sval, int ival,
+				enum rw_ruri_part part);
+
+
 /*
  * Set the q value of the Request-URI
  */
@@ -508,6 +531,7 @@ int set_dst_uri(struct sip_msg* msg, str* uri);
  * Make a private copy of the string and assign it to path_vec
  */
 int set_path_vector(struct sip_msg* msg, str* path);
+void clear_path_vector(struct sip_msg* msg);
 
 
 /*

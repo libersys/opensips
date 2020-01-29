@@ -62,18 +62,18 @@
 #include "../../data_lump.h"
 #include "../../data_lump_rpl.h"
 #include "../../forward.h"
-#include "../../parser/parse_uri.h"
-#include "../../parser/sdp/sdp_helpr_funcs.h"
 #include "../../timer.h"
 #include "../../msg_translator.h"
 #include "../../socket_info.h"
 #include "../../mod_fix.h"
-#include "../registrar/sip_msg.h"
-#include "../usrloc/usrloc.h"
-#include "../usrloc/ul_mod.h"
-#include "../../parser/parse_content.h"
 #include "../../sr_module.h"
 #include "../../lib/csv.h"
+#include "../../parser/parse_uri.h"
+#include "../../parser/sdp/sdp_helpr_funcs.h"
+#include "../../parser/parse_content.h"
+#include "../../parser/contact/parse_contact.h"
+#include "../usrloc/usrloc.h"
+#include "../usrloc/ul_mod.h"
 
 
 static int rm_on_to_flag = -1;         /* these variables are required */
@@ -302,6 +302,7 @@ struct module_exports exports = {
 	0,           /* exported pseudo-variables */
 	0,			 /* exported transformations */
 	0,           /* extra processes */
+	0,			 /* pre-init function */
 	mod_init,
 	0,           /* sipping_rpl_filter() - optional reply processing */
 	mod_destroy, /* destroy function */
@@ -1729,7 +1730,7 @@ int fix_ignore_rpl_codes(void)
 		return 0;
 
 	ignore_rpl_codes_str.len = strlen(ignore_rpl_codes_str.s);
-	chopped_codes = _parse_csv_record(&ignore_rpl_codes_str, CSV_SIMPLE);
+	chopped_codes = parse_csv_record(&ignore_rpl_codes_str);
 	if (!chopped_codes) {
 		LM_ERR("oom\n");
 		return -1;

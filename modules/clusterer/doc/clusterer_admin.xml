@@ -27,7 +27,16 @@
 		The clusterer module also keeps track of the state of the nodes in terms of data synchronization for the functionalities (or "capabilities") implemented on top by other modules. Some capabilities require a full data sync(at &osips; startup or at runtime via MI) from a valid "donor" node in the cluster that has the full data set. Furthermore, a capability can query the clusterer module in order to partition some distributed logic only over the synchronized nodes in the cluster.
 	</para>
 	<para>
-		When the nodes in the cluster start for the first time(or all nodes are restarted), all of them are empty and try to find a suitable node to pull data from. In order to help "bootstrapping" the cluster a "seed" node (considered to be already synchronized from startup) should be defined. This is done by setting the value <emphasis>seed</emphasis> for the <emphasis role="bold">flags</emphasis> column in the clusterer table(or the property with the same name in the <emphasis>my_node_info</emphasis> parameter). Note that this mechanism is required only for capabilities that synchronize data at startup so check the corresponding modules documentation.
+		Each node in the cluster starts with an empty dataset and tries to find
+		a suitable node to pull data from. In order to help "bootstrap" the
+		cluster, a "seed" node should be defined. This is done by setting the value
+		<emphasis>seed</emphasis> for the <emphasis role="bold">flags</emphasis>
+		column in the clusterer table(or the property with the same name in the
+		<emphasis>my_node_info</emphasis> parameter). The seed node will simply
+		fall back to a "synced" state after a configurable interval(
+		<xref linkend="param_seed_fallback_interval"/> parameter). Note that
+		this mechanism is required only for capabilities that synchronize data
+		at startup, so check the corresponding modules documentation.
 	</para>
 	<para>
 		The clusterer module transparently exposes the <emphasis>sip_addr</emphasis> column from the clusterer table(or the property with the same name in the <emphasis>my_node_info</emphasis> parameter) to the modules on top so check the corresponding modules documentation for the use of this node related information.
@@ -314,6 +323,28 @@ modparam("clusterer", "node_timeout", 10)
 		</example>
         </section>
 
+        <section id="param_seed_fallback_interval" xreflabel="seed_fallback_interval">
+            <title><varname>seed_fallback_interval</varname></title>
+            <para>
+                Only relevant for "seed" nodes.  The time, in seconds, to wait
+                for a suitable donor node before falling back to a "synced"
+                state, following a node restart or an MI cluster sync command.
+            </para>
+            <para>
+		<emphasis>
+			Default value is <quote>5</quote>.
+		</emphasis>
+            </para>
+            <example>
+		<title>Set <varname>seed_fallback_interval</varname> parameter</title>
+		<programlisting format="linespecific">
+...
+modparam("clusterer", "seed_fallback_interval", 10)
+...
+		</programlisting>
+		</example>
+        </section>
+
         <section id="param_sync_packet_max_size" xreflabel="sync_packet_max_size">
             <title><varname>sync_packet_max_size</varname></title>
             <para>
@@ -566,7 +597,7 @@ modparam("clusterer", "description_col", "description")
 					The function can return the following values:
 					<itemizedlist>
 						<listitem>
-							<para><emphasis>1</emphasis> - successfuly sent message to destination node or a valid next hop</para>
+							<para><emphasis>1</emphasis> - successfully sent message to destination node or a valid next hop</para>
 						</listitem>
 						<listitem>
 							<para><emphasis>-1</emphasis> - local node is disabled so sending is impossbile</para>
@@ -629,7 +660,7 @@ route[rpl_resume] {
 					The function can return the following values:
 					<itemizedlist>
 						<listitem>
-							<para><emphasis>1</emphasis> - successfuly sent message to destination node or a valid next hop</para>
+							<para><emphasis>1</emphasis> - successfully sent message to destination node or a valid next hop</para>
 						</listitem>
 						<listitem>
 							<para><emphasis>-1</emphasis> - local node is disabled so sending is impossbile</para>
@@ -650,7 +681,7 @@ route[rpl_resume] {
 						<programlisting format="linespecific">
 ...
 event_route[E_CLUSTERER_REQ_RECEIVED] {
-  cluster_send_rpl($param(cl_id), $param(src_id), $var(my_reply), $param(rcv_tag));
+  cluster_send_rpl($param(cluster_id), $param(src_id), $var(my_reply), $param(tag));
 }
 ...
 				</programlisting>
@@ -668,7 +699,7 @@ event_route[E_CLUSTERER_REQ_RECEIVED] {
 					The function can return the following values:
 					<itemizedlist>
 						<listitem>
-							<para><emphasis>1</emphasis> - successfuly sent message to at least one node;</para>
+							<para><emphasis>1</emphasis> - successfully sent message to at least one node;</para>
 						</listitem>
 						<listitem>
 							<para><emphasis>-1</emphasis> - local node is disabled so sending is impossbile;</para>

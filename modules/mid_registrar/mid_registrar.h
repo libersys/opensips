@@ -68,6 +68,8 @@ struct ct_mapping {
 	str received;
 	str instance;
 
+	ucontact_t *uc;
+
 	struct list_head list;
 };
 
@@ -96,11 +98,13 @@ struct mid_reg_info {
 	                                   marks the last successful reg */
 
 	int skip_dereg;
+	int max_contacts;
 	struct list_head ct_mappings;
 
 	udomain_t *dom; /* used during 200 OK ul_api operations */
 	str aor;        /* used during both "reg out" and "resp in" */
 	str ownership_tag; /* a sharing tag which helps decide ownership */
+	struct ct_match cmatch; /* info regarding the contact matching mode */
 
 	/* ucontact_info dup'ed fields */
 	str user_agent;
@@ -109,19 +113,6 @@ struct mid_reg_info {
 
 	int pending_replies;
 	rw_lock_t *tm_lock;
-};
-
-struct save_ctx {
-	unsigned int flags;
-	str aor;
-	str ownership_tag;
-	unsigned int max_contacts;
-	unsigned int expires;
-	int expires_out;
-	int star;
-
-	unsigned int min_expires;
-	unsigned int max_expires;
 };
 
 extern rw_lock_t *tm_retrans_lk;

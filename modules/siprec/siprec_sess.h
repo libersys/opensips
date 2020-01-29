@@ -56,6 +56,7 @@ struct src_part {
 	str aor;
 	str name;
 	str xml_val;
+	time_t ts;
 	siprec_uuid uuid;
 	struct list_head streams;
 };
@@ -73,6 +74,7 @@ struct src_sess {
 	int streams_no;
 	str rtpproxy;
 	str media_ip;
+	str headers;
 
 	/* SRS */
 	struct list_head srs;
@@ -101,10 +103,10 @@ struct src_sess {
 
 void src_unref_session(void *p);
 struct src_sess *src_new_session(str *srs, str *rtp, str *m_ip, str *group,
-		struct socket_info *si);
+		str *hdrs, struct socket_info *si);
 void src_free_session(struct src_sess *sess);
 int src_add_participant(struct src_sess *sess, str *aor, str *name, str *xml_val,
-		siprec_uuid *uuid);
+		siprec_uuid *uuid, time_t *start);
 
 extern struct tm_binds srec_tm;
 extern struct dlg_binds srec_dlg;
@@ -125,10 +127,11 @@ extern struct dlg_binds srec_dlg;
 		SIPREC_UNLOCK(_s); \
 	} while(0)
 
-#define SIPREC_UNREF_COUNT_UNSAFE(_s, _c) \
+#define SIPREC_UNREF(_s) \
 	do { \
+		SIPREC_LOCK(_s); \
 		SIPREC_DEBUG(_s, "unref"); \
-		(_s)->ref -= (_c); \
+		(_s)->ref--; \
 		if ((_s)->ref == 0) { \
 			LM_DBG("destroying session=%p\n", _s); \
 			SIPREC_UNLOCK(_s); \
@@ -137,18 +140,23 @@ extern struct dlg_binds srec_dlg;
 			if ((_s)->ref < 0) \
 				LM_BUG("invalid ref for session=%p ref=%d (%s:%d)\n", \
 						(_s), (_s)->ref, __func__, __LINE__); \
+			SIPREC_UNLOCK(_s); \
 		} \
 	} while(0)
 
-#define SIPREC_UNREF_COUNT(_s, _c) \
+#define SIPREC_UNREF_UNSAFE(_s) \
 	do { \
-		SIPREC_LOCK(_s); \
-		SIPREC_UNREF_COUNT_UNSAFE(_s, _c); \
-		SIPREC_UNLOCK(_s); \
+		SIPREC_DEBUG(_s, "unref"); \
+		(_s)->ref--; \
+		if ((_s)->ref == 0) { \
+			LM_DBG("destroying session=%p\n", _s); \
+			src_free_session(_s); \
+		} else { \
+			if ((_s)->ref < 0) \
+				LM_BUG("invalid ref for session=%p ref=%d (%s:%d)\n", \
+						(_s), (_s)->ref, __func__, __LINE__); \
+		} \
 	} while(0)
-
-#define SIPREC_UNREF_UNSAFE(_s) SIPREC_UNREF_COUNT_UNSAFE(_s, 1)
-#define SIPREC_UNREF(_s) SIPREC_UNREF_COUNT(_s, 1)
 
 void srec_loaded_callback(struct dlg_cell *dlg, int type,
 		struct dlg_cb_params *params);

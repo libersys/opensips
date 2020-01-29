@@ -97,6 +97,7 @@ struct module_exports exports =
 	NULL,
 	NULL,			  /* exported transformations */
 	NULL,
+	NULL,
 	mod_init,
 	NULL,
 	NULL,
@@ -188,7 +189,7 @@ int run_helper_logic(struct sip_msg *msg, void *param)
 				return SCB_RUN_POST_CBS;
 			}
 
-			sl_api.reply(msg, 404, &status_404);
+			sl_api.reply(msg, 404, &status_404, NULL);
 			return SCB_RUN_POST_CBS;
 		}
 	}
@@ -222,7 +223,7 @@ int run_helper_logic(struct sip_msg *msg, void *param)
 		}
 
 		if (tm_api.t_relay(msg, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL) < 0)
-			sl_api.reply(msg, 500, &status_500);
+			sl_api.reply(msg, 500, &status_500, NULL);
 
 		return SCB_RUN_POST_CBS;
 	}

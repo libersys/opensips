@@ -83,6 +83,7 @@ struct module_exports exports= {
 	0,						/* exported pseudo-variables */
 	0,			 			/* exported transformations */
 	procs,					/* extra processes */
+	0,						/* module pre-initialization function */
 	mod_init,				/* module initialization function */
 	0,						/* response handling function */
 	0,						/* destroy function */
@@ -336,8 +337,11 @@ int event_route_param_get(struct sip_msg *msg, pv_param_t *ip,
 void route_run(struct action* a, struct sip_msg* msg,
 		evi_params_t *params, str *event)
 {
+	int old_route_type;
 	route_params_push_level(params, event, event_route_param_get);
+	swap_route_type(old_route_type, EVENT_ROUTE);
 	run_top_route(a, msg);
+	set_route_type(old_route_type);
 	route_params_pop_level();
 }
 
@@ -361,7 +365,7 @@ static int scriptroute_raise(struct sip_msg *msg, str* ev_name,
 		LM_ERR("failed to serialize event route triggering\n");
 		return -1;
 	}
-	buf->a = sroutes->event[SR_SOCK_ROUTE(sock)].a;
+	buf->ev_route_id = SR_SOCK_ROUTE(sock);
 
 	if (route_send(buf) < 0)
 		return -1;

@@ -164,6 +164,7 @@ struct module_exports exports= {
 	0,          /* exported pseudo-variables */
 	0,			/* exported transformations */
 	0,          /* extra processes */
+	0,          /* module pre-initialization function */
 	mod_init,   /* module initialization function */
 	(response_function) 0,
 	mod_destroy,
@@ -365,7 +366,7 @@ static int fixup_replace_disp_uri(void** param)
 	str repl;
 
 	/* check to see if it is already quoted */
-	if ((s->s[0] == '\"' && s->s[s->len - 1] == '\"') ||
+	if ((s->len >= 2 && s->s[0] == '\"' && s->s[s->len - 1] == '\"') ||
 			str_check_token(s)) {
 		if (pkg_nt_str_dup(&repl, s) < 0)
 			return E_OUT_OF_MEM;

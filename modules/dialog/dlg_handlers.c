@@ -81,7 +81,6 @@ extern struct rr_binds d_rrb;
 extern int race_condition_timeout;
 
 /* statistic variables */
-extern stat_var *early_dlgs;
 extern stat_var *processed_dlgs;
 extern stat_var *expired_dlgs;
 extern stat_var *failed_dlgs;
@@ -492,6 +491,7 @@ static void dlg_onreply(struct cell* t, int type, struct tmcb_params *param)
 		/* only if we did force match the Cancel to the
 		 * dialog before ( from the script ) */
 		dlg->flags |= DLG_FLAG_WAS_CANCELLED;
+		init_dlg_term_reason(dlg,"Cancelled",sizeof("Cancelled")-1);
 
 		if (dlg->flags & DLG_FLAG_END_ON_RACE_CONDITION &&
 		dlg->state>= DLG_STATE_CONFIRMED_NA) {
@@ -603,8 +603,8 @@ static void dlg_onreply(struct cell* t, int type, struct tmcb_params *param)
 		LM_DBG("dialog %p failed (negative reply)\n", dlg);
 
 		/*destroy profile linkers */
-		destroy_linkers(dlg, 0);
-		remove_dlg_prof_table(dlg, 0);
+		destroy_linkers(dlg);
+		remove_dlg_prof_table(dlg, 1);
 
 		/* dialog setup not completed (3456XX) */
 		run_dlg_callbacks(DLGCB_FAILED, dlg, rpl, DLG_DIR_UPSTREAM, NULL, 0, 1);
@@ -1245,9 +1245,15 @@ static inline int dlg_update_contact(struct dlg_cell *dlg, struct sip_msg *msg,
 {
 	str contact;
 	char *tmp;
-	if (!msg->contact || !msg->contact->parsed ||
-			!((contact_body_t *)msg->contact->parsed)->contacts)
-		return 0; /* contact not updated */
+
+	if (!msg->contact &&
+		(parse_headers(msg, HDR_CONTACT_F, 0) < 0 || !msg->contact)) {
+		LM_DBG("INVITE or UPDATE without a contact - not updating!\n");
+		return 0;
+	} else if (!msg->contact->parsed && parse_contact(msg->contact) < 0) {
+		LM_INFO("INVITE or UPDATE with broken contact - not updating!\n");
+		return 0;
+	}
 	contact = ((contact_body_t *)msg->contact->parsed)->contacts->uri;
 	if (dlg->legs[leg].contact.s) {
 		/* if the same contact, don't do anything */
@@ -1464,31 +1470,16 @@ error:
 	return -1;
 }
 
-static inline void update_contact_and_sdp(struct dlg_cell *dlg, struct sip_msg *req,
+static inline void update_sequential_sdp(struct dlg_cell *dlg, struct sip_msg *req,
 		unsigned int leg)
 {
 	int ret;
-	int update_contact = 0;
 
 	if (req->REQ_METHOD != METHOD_INVITE && req->REQ_METHOD != METHOD_UPDATE)
 		return;
 
-	/* make sure contact is parsed */
-	if (!req->contact &&
-		(parse_headers(req, HDR_CONTACT_F, 0) < 0 || !req->contact))
-		LM_INFO("INVITE or UPDATE without a contact - not updating!\n");
-	else if (!req->contact->parsed && parse_contact(req->contact) < 0)
-		LM_INFO("INVITE or UPDATE with broken contact - not updating!\n");
-	else
-		update_contact = 1;
-
 	dlg_lock_dlg(dlg);
-	if (update_contact)
-		ret = dlg_update_contact(dlg, req, leg);
-	else
-		ret = 0;
-	if (ret >= 0)
-		ret += dlg_update_sdp(dlg, req, leg);
+	ret = dlg_update_sdp(dlg, req, leg);
 	dlg_unlock_dlg(dlg);
 
 	/* if anything has changed in the meantime, also update replicate */
@@ -1680,7 +1671,7 @@ void dlg_onroute(struct sip_msg* req, str *route_params, void *param)
 			return;
 		}
 	}
-	update_contact_and_sdp(dlg, req,
+	update_sequential_sdp(dlg, req,
 			dst_leg == DLG_CALLER_LEG? callee_idx(dlg): DLG_CALLER_LEG);
 
 	if (dialog_repl_cluster)
@@ -1711,8 +1702,8 @@ void dlg_onroute(struct sip_msg* req, str *route_params, void *param)
 	old_state!=DLG_STATE_DELETED) {
 
 		/*destroy profile linkers */
-		destroy_linkers(dlg, 0);
-		remove_dlg_prof_table(dlg,0);
+		destroy_linkers(dlg);
+		remove_dlg_prof_table(dlg,is_active);
 
 		if (!dlg->terminate_reason.s) {
 			if (dst_leg == 0)
@@ -2098,8 +2089,8 @@ void dlg_ontimeout(struct dlg_tl *tl)
 			ZSW(dlg->legs[callee_idx(dlg)].tag.s));
 
 		/*destroy profile linkers */
-		destroy_linkers(dlg, 0);
-		remove_dlg_prof_table(dlg,0);
+		destroy_linkers(dlg);
+		remove_dlg_prof_table(dlg,do_expire_actions);
 
 		/* dialog timeout */
 		if (push_new_processing_context(dlg, &old_ctx, &new_ctx, &fake_msg)==0) {
@@ -2499,12 +2490,16 @@ int dlg_validate_dialog( struct sip_msg* req, struct dlg_cell *dlg)
 	return 0;
 }
 
-int terminate_dlg(unsigned int h_entry, unsigned int h_id,str *reason)
+int terminate_dlg(str *callid, unsigned int h_entry, unsigned int h_id,
+	str *reason)
 {
 	struct dlg_cell * dlg = NULL;
 	int ret = 0;
 
-	dlg = lookup_dlg(h_entry, h_id);
+	if (callid)
+		dlg = get_dlg_by_callid(callid, 1);
+	else
+		dlg = lookup_dlg(h_entry, h_id);
 
 	if(!dlg)
 		return 0;

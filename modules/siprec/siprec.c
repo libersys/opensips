@@ -37,7 +37,7 @@ static int child_init(int);
 static void mod_destroy(void);
 
 static int siprec_start_rec(struct sip_msg *msg, str *srs, str *group,
-		str *_cA, str *_cB, str *rtp, str *m_ip);
+		str *_cA, str *_cB, str *rtp, str *m_ip, str *_hdrs);
 
 /* modules dependencies */
 static dep_export_t deps = {
@@ -62,6 +62,7 @@ static cmd_export_t cmds[] = {
 		{CMD_PARAM_STR|CMD_PARAM_OPT,0,0},
 		{CMD_PARAM_STR|CMD_PARAM_OPT,0,0},
 		{CMD_PARAM_STR|CMD_PARAM_OPT,0,0},
+		{CMD_PARAM_STR|CMD_PARAM_OPT,0,0},
 		{CMD_PARAM_STR|CMD_PARAM_OPT,0,0}, {0,0,0}},
 		REQUEST_ROUTE},
 	{0,0,{{0,0,0}},0}
@@ -82,7 +83,7 @@ struct module_exports exports = {
 	MODULE_VERSION,
 	DEFAULT_DLFLAGS,				/* dlopen flags */
 	0,								/* load function */
-	&deps,						    /* OpenSIPS module dependencies */
+	&deps,							/* OpenSIPS module dependencies */
 	cmds,							/* exported functions */
 	0,								/* exported async functions */
 	params,							/* exported parameters */
@@ -91,6 +92,7 @@ struct module_exports exports = {
 	0,								/* exported pseudo-variables */
 	0,								/* extra processes */
 	0,								/* extra transformations */
+	0,								/* module pre-initialization function */
 	mod_init,						/* module initialization function */
 	(response_function) 0,			/* response handling function */
 	(destroy_function)mod_destroy,	/* destroy function */
@@ -162,7 +164,7 @@ static void mod_destroy(void)
  * function that simply prints the parameters passed
  */
 static int siprec_start_rec(struct sip_msg *msg, str *srs, str *group,
-		str *_cA, str *_cB, str *rtp, str *m_ip)
+		str *_cA, str *_cB, str *rtp, str *m_ip, str *_hdrs)
 {
 	int ret;
 	str *aor, *display, *xml_val;
@@ -183,14 +185,14 @@ static int siprec_start_rec(struct sip_msg *msg, str *srs, str *group,
 	 * this is the only way to provide a different socket for SRS, but
 	 * we might need to take a different approach */
 	/* check if the current dialog has a siprec session ongoing */
-	if (!(ss = src_new_session(srs, rtp, m_ip, group, msg->force_send_socket))) {
+	if (!(ss = src_new_session(srs, rtp, m_ip, group, _hdrs, msg->force_send_socket))) {
 		LM_ERR("cannot create siprec session!\n");
 		return -2;
 	}
 
 	/* we ref the dialog to make sure it does not dissapear until we receive
 	 * the reply from the SRS */
-	srec_dlg.ref_dlg(dlg, 1);
+	srec_dlg.dlg_ref(dlg, 1);
 	ss->dlg = dlg;
 
 	ret = -2;
@@ -209,7 +211,7 @@ static int siprec_start_rec(struct sip_msg *msg, str *srs, str *group,
 		xml_val = NULL;
 	}
 
-	if (src_add_participant(ss, aor, display, xml_val, NULL) < 0) {
+	if (src_add_participant(ss, aor, display, xml_val, NULL, NULL) < 0) {
 		LM_ERR("cannot add caller participant!\n");
 		goto session_cleanup;
 	}
@@ -230,7 +232,7 @@ static int siprec_start_rec(struct sip_msg *msg, str *srs, str *group,
 		xml_val = NULL;
 	}
 
-	if (src_add_participant(ss, aor, display, xml_val, NULL) < 0) {
+	if (src_add_participant(ss, aor, display, xml_val, NULL, NULL) < 0) {
 		LM_ERR("cannot add callee pariticipant!\n");
 		goto session_cleanup;
 	}

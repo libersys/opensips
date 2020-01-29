@@ -659,12 +659,16 @@ mi_response_t *mi_shm_check(const mi_params_t *params,
 void init_shm_post_yyparse(void)
 {
 #ifdef HP_MALLOC
-	if (mem_warming_enabled && hp_mem_warming(shm_block) != 0) {
-		LM_INFO("skipped memory warming\n");
-	}
 	if (mem_allocator_shm == MM_HP_MALLOC ||
-	    mem_allocator_shm == MM_HP_MALLOC_DBG)
+	    mem_allocator_shm == MM_HP_MALLOC_DBG) {
+
+		if (mem_warming_enabled && hp_mem_warming(shm_block) != 0)
+			LM_INFO("skipped memory warming\n");
+
 		hp_init_shm_statistics(shm_block);
+	} else if (mem_warming_enabled) {
+		LM_WARN("SHM memory warming only makes sense with HP_MALLOC!\n");
+	}
 #endif
 
 #ifdef SHM_EXTRA_STATS
@@ -677,24 +681,24 @@ void init_shm_post_yyparse(void)
 
 #ifdef SHM_SHOW_DEFAULT_GROUP
 		p = (stat_var *)&memory_mods_stats[0].fragments;
-		if (register_stat(STAT_PREFIX "default", "fragments", &p, STAT_NO_RESET|STAT_NO_ALLOC)!=0 ) {
+		if (register_stat(STAT_PREFIX "default", "fragments", &p, STAT_NO_RESET|STAT_NOT_ALLOCATED)!=0 ) {
 			LM_CRIT("can't add stat variable");
 			return;
 		}
 		p = (stat_var *)&memory_mods_stats[0].memory_used;
-		if (register_stat(STAT_PREFIX "default", "memory_used", &p, STAT_NO_RESET|STAT_NO_ALLOC)!=0 ) {
+		if (register_stat(STAT_PREFIX "default", "memory_used", &p, STAT_NO_RESET|STAT_NOT_ALLOCATED)!=0 ) {
 			LM_CRIT("can't add stat variable");
 			return;
 		}
 
 		p = (stat_var *)&memory_mods_stats[0].real_used;
-		if (register_stat(STAT_PREFIX "default", "real_used", &p, STAT_NO_RESET|STAT_NO_ALLOC)!=0 ) {
+		if (register_stat(STAT_PREFIX "default", "real_used", &p, STAT_NO_RESET|STAT_NOT_ALLOCATED)!=0 ) {
 			LM_CRIT("can't add stat variable");
 			return;
 		}
 
 		p = (stat_var *)&memory_mods_stats[0].max_real_used;
-		if (register_stat(STAT_PREFIX "default", "max_real_used", &p, STAT_NO_ALLOC)!=0 ) {
+		if (register_stat(STAT_PREFIX "default", "max_real_used", &p, STAT_NOT_ALLOCATED)!=0 ) {
 			LM_CRIT("can't add stat variable");
 			return;
 		}
@@ -711,25 +715,25 @@ void init_shm_post_yyparse(void)
 			strcpy(full_name, STAT_PREFIX);
 			strcat(full_name, mod_name->s);
 			p = (stat_var *)&memory_mods_stats[i].fragments;
-			if (register_stat(full_name, "fragments", &p, STAT_NO_RESET|STAT_NO_ALLOC)!=0 ) {
+			if (register_stat(full_name, "fragments", &p, STAT_NO_RESET|STAT_NOT_ALLOCATED)!=0 ) {
 				LM_CRIT("can't add stat variable");
 				return;
 			}
 
 			p = (stat_var *)&memory_mods_stats[i].memory_used;
-			if (register_stat(full_name, "memory_used", &p, STAT_NO_RESET|STAT_NO_ALLOC)!=0 ) {
+			if (register_stat(full_name, "memory_used", &p, STAT_NO_RESET|STAT_NOT_ALLOCATED)!=0 ) {
 				LM_CRIT("can't add stat variable");
 				return;
 			}
 
 			p = (stat_var *) &memory_mods_stats[i].real_used;
-			if (register_stat(full_name, "real_used", &p, STAT_NO_RESET|STAT_NO_ALLOC)!=0 ) {
+			if (register_stat(full_name, "real_used", &p, STAT_NO_RESET|STAT_NOT_ALLOCATED)!=0 ) {
 				LM_CRIT("can't add stat variable");
 				return;
 			}
 
 			p = (stat_var *) &memory_mods_stats[i].max_real_used;
-			if (register_stat(full_name, "max_real_used", &p, STAT_NO_ALLOC) != 0) {
+			if (register_stat(full_name, "max_real_used", &p, STAT_NOT_ALLOCATED) != 0) {
 				LM_CRIT("can't add stat variable");
 				return;
 			}
@@ -754,7 +758,8 @@ void shm_mem_destroy(void)
 #ifdef HP_MALLOC
 	int j;
 
-	if (mem_allocator_shm == MM_HP_MALLOC)
+	if (mem_allocator_shm == MM_HP_MALLOC ||
+	    mem_allocator_shm == MM_HP_MALLOC_DBG)
 		hp_update_shm_pattern_file();
 #endif
 

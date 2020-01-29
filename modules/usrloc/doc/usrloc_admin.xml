@@ -687,15 +687,16 @@ modparam("usrloc", "desc_time_order", 1)
 	<section id="param_timer_interval" xreflabel="timer_interval">
 		<title><varname>timer_interval</varname> (integer)</title>
 		<para>
-		Number of seconds between two timer runs. The module uses timer to
-		delete expired contacts, synchronize with database and other tasks,
-		that need to be run periodically.
+		Number of seconds between two timer runs.  During each run, the module
+		will update/delete dirty/expired contacts from memory and/or mirror
+		these operations to the database, if configured to do so.
 		</para>
 		<warning>
 		<para>
-			In case of crash or restart contacts that are in memory only and
-			haven't been flushed yet will get lost. If you want minimize the
-			risk, use a shorter timer interval.
+		In case of an OpenSIPS shutdown or even a crash, contacts which are in
+		memory only and have not been flushed yet to disk will NOT get lost!
+		OpenSIPS will try its best to do a last-minute sync to DB right before
+		shutting down.
 		</para>
 		</warning>
 		<para>
@@ -936,10 +937,9 @@ modparam("usrloc", "working_mode_preset", "full-sharing-cachedb-cluster")
 			</listitem>
 			<listitem>
 				<para><emphasis>"full-sharing"</emphasis> -
-				Full contact data broadcasting (mirroring) to all other
-				OpenSIPS cluster participants. 
-				inside a NoSQL database, so other cluster nodes are able to
-				route SIP traffic through the current node. Consequently, the
+				Broadcast contact updates (full-mesh mirroring) to all other
+				OpenSIPS cluster participants.  Each node will hold the entire
+				user location dataset.  Consequently, the
 				<xref linkend="param_location_cluster"/> parameter is mandatory.
 				</para>
 			</listitem>
@@ -950,7 +950,8 @@ modparam("usrloc", "working_mode_preset", "full-sharing-cachedb-cluster")
 				The cluster layer is still required in order to
 				be able to partition and spread the pinging workload evenly
 				among participating OpenSIPS nodes. Consequently, the
-				<xref linkend="param_location_cluster"/> parameter is mandatory.
+				<xref linkend="param_location_cluster"/> and
+				<xref linkend="param_cachedb_url"/> parameters are mandatory.
 				</para>
 			</listitem>
 			<listitem>
@@ -963,7 +964,7 @@ modparam("usrloc", "working_mode_preset", "full-sharing-cachedb-cluster")
 		</itemizedlist>
 		<para>
 		<emphasis>
-			Default value is <emphasis>none (single instance mode)</emphasis>.
+			Default value is <emphasis>"none" (single instance mode)</emphasis>.
 		</emphasis>
 		</para>
 		<example>
@@ -1526,7 +1527,9 @@ modparam("usrloc", "mi_dump_kv_store", 1)
 		<function moreinfo="none">ul_flush</function>
 		</title>
 		<para>
-		Triggers the flush of USRLOC memory cache into DB.
+		Force a flush of all pending usrloc cache changes to the database.
+		Normally, this routine runs every
+		<xref linkend="param_timer_interval"/> seconds.
 		</para>
 	</section>
 
@@ -1602,14 +1605,14 @@ modparam("usrloc", "mi_dump_kv_store", 1)
 		<function moreinfo="none">ul_sync</function>
 		</title>
 		<para>
-		Synchronizes the contacts from memory with the ones from database.
-		Note that this can not be used when no database is specified or with the
-		DB-Only scheme.
-
+		Empty the location table, then synchronize it with all contacts from
+		memory.  Note that this can not be used when no database is specified
+		or with the DB-Only scheme.
+		</para>
+		<para>
 		Important: make sure that all your contacts are in memory
 		(<emphasis>ul_dump</emphasis> MI function) before executing this
-		command. If the AOR is not specified, the whole table will be
-		synchronized.
+		command.
 		</para>
 		<para>Parameters: </para>
 		<itemizedlist>
@@ -1618,9 +1621,10 @@ modparam("usrloc", "mi_dump_kv_store", 1)
 				resides (Ex: location).
 			</para></listitem>
 			<listitem><para>
-				<emphasis>AOR (optional)</emphasis> - user AOR in username[@domain]
-				format (domain must be supplied only if use_domain option
-				is on).
+				<emphasis>AOR (optional)</emphasis> - only delete/sync this
+				user AOR, not the whole table.  Format: "username[@domain]"
+				(<emphasis>domain</emphasis> is required only if
+				<xref linkend="param_use_domain"/> option is on).
 			</para></listitem>
 		</itemizedlist>
 	</section>
@@ -1750,6 +1754,12 @@ modparam("usrloc", "mi_dump_kv_store", 1)
 			<listitem><para>
 				<emphasis>qval</emphasis> - The Q value (priority) of the 
 				contact (as integer value from 0 to 10).
+			</para></listitem>
+			<listitem><para>
+				<emphasis>user_agent</emphasis> - The User-Agent header
+				value.
+			</para>
+			<para><emphasis>NOTICE: </emphasis>Can contain spaces.
 			</para></listitem>
 			<listitem><para>
 				<emphasis>socket</emphasis> - The SIP socket/listener

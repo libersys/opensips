@@ -91,6 +91,7 @@ struct module_exports exports= {
 	NULL,             /* exported pseudo-variables */
 	NULL,			 	  /* exported transformations */
 	procs,            /* extra processes */
+	0,                /* module pre-initialization function */
 	mod_init,         /* module initialization function */
 	NULL,             /* reply processing function */
 	NULL,

@@ -36,7 +36,9 @@ proto_smpp module
 
         1.7. Exported Functions
 
-              1.7.1. send_smpp_message(smsc_name)
+              1.7.1.
+                      send_smpp_message(smsc_name,[delivery_receipt]
+                      )
 
    2. Contributors
 
@@ -409,7 +411,7 @@ modparam("proto_smpp", "session_type_col", "smsc_session_type")
 
 1.7. Exported Functions
 
-1.7.1.  send_smpp_message(smsc_name)
+1.7.1.  send_smpp_message(smsc_name,[delivery_receipt])
 
    This function is used to convert a SIP message received in the
    OpenSIPS script to a SMPP PDU and send it to the smsc_name
@@ -421,6 +423,21 @@ modparam("proto_smpp", "session_type_col", "smsc_session_type")
    The function returns -2 if the SMSc the message should be sent
    does not exist in the database, -1 if there was an internal
    error, or positive value in case of success.
+
+   Meaning of the parameters is as follows:
+     * sms_name (string) - name of the SMS to be used for sending
+       the SMPP traffic.
+     * from (string, optional) - the source number. If missing,
+       the SIP message from username is used.
+     * to (string, optional) - the destination number. If missing,
+       the SIP request URI username is used.
+     * body (string, optional) - the body of the SMS. If missing,
+       the SIP message body is used.
+     * UTF-16 (int, optional) - set to 1 if the body of the
+       message is in UTF-16. format. If missing or 0, UTF-8 is
+       used.
+     * delivery_receipt (int, optional) - Whether the SMSC should
+       confirm delivery for this SMS or not
 
    This function can be used from REQUEST_ROUTE, FAILURE_ROUTE or
    BRANCH_ROUTE.
@@ -439,8 +456,8 @@ Chapter 2. Contributors
    commits^(2) and lines added/removed^(3)
      Name DevScore Commits Lines ++ Lines --
    1. Victor Ciurel (@victor-ciurel) 81 21 3760 1658
-   2. Razvan Crainea (@razvancrainea) 38 15 1516 610
-   3. Vlad Paiu (@vladpaiu) 4 2 17 8
+   2. Razvan Crainea (@razvancrainea) 59 30 1944 715
+   3. Vlad Paiu (@vladpaiu) 8 5 234 37
    4. Vlad Patrascu (@rvlad-patrascu) 4 2 10 13
    5. Bogdan-Andrei Iancu (@bogdan-iancu) 4 2 3 1
 
@@ -464,9 +481,9 @@ Chapter 2. Contributors
 
    Table 2.2. Most recently active contributors^(1) to this module
                      Name                   Commit Activity
-   1. Razvan Crainea (@razvancrainea)     Jan 2019 - Jun 2019
-   2. Bogdan-Andrei Iancu (@bogdan-iancu) Apr 2019 - May 2019
-   3. Vlad Paiu (@vladpaiu)               May 2019 - May 2019
+   1. Razvan Crainea (@razvancrainea)     Jan 2019 - Jan 2020
+   2. Vlad Paiu (@vladpaiu)               May 2019 - Sep 2019
+   3. Bogdan-Andrei Iancu (@bogdan-iancu) Apr 2019 - May 2019
    4. Vlad Patrascu (@rvlad-patrascu)     Apr 2019 - Apr 2019
    5. Victor Ciurel (@victor-ciurel)      Sep 2017 - Jan 2019
 
@@ -477,7 +494,7 @@ Chapter 3. Documentation
 
 3.1. Contributors
 
-   Last edited by: Vlad Patrascu (@rvlad-patrascu), Razvan Crainea
-   (@razvancrainea).
+   Last edited by: Razvan Crainea (@razvancrainea), Vlad Paiu
+   (@vladpaiu), Vlad Patrascu (@rvlad-patrascu).
 
    Documentation Copyrights:

@@ -73,6 +73,7 @@ struct module_exports exports= {
 	mod_items,       /* exported pseudo-variables */
 	0,				 /* exported transformations */
 	0,               /* extra processes */
+	0,        		 /* module pre-initialization function */
 	0,        		 /* module initialization function */
 	0,               /* reply processing function */
 	0,

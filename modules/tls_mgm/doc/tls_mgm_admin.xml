@@ -84,7 +84,7 @@
 			You can define domains both in the DB and script at the same time.
 		</para>
 		<para>
-			For any TLS domain (defined through script or DB, default or virtual) if not specified otherwise, the default settings are:
+			For any TLS domain (defined through script or DB) if not specified otherwise, the default settings are:
 			<itemizedlist>
 				<listitem><para>method - <emphasis>SSLv23</emphasis></para></listitem>
 				<listitem><para>verify_cert - <emphasis>1</emphasis></para></listitem>
@@ -180,7 +180,9 @@ if (is_peer_verified()) {
 		<function moreinfo="none">tls_reload</function>
                 </title>
                 <para>
-                Reloads the TLS domains information from the database. The previous DB defined domains are discarded but the script defined domains are preserved. If no new default client or server domains is loaded and previously the default was DB defined, the standard default domain is reinstated.
+                Reloads the TLS domains information from the database.
+                The previous DB defined domains are discarded but the
+                script defined domains are preserved.
                 </para>
             </section>
         </section>
@@ -217,6 +219,12 @@ listen = tls:1.2.3.4:5061
 			</para>
 			<itemizedlist>
 				<listitem>
+				<para><emphasis>TLSv1_3</emphasis> - means &osips; will
+				accept only TLSv1.3 connections. This version is only
+				available starting with OpenSSL 1.1.1 version.
+				</para>
+				</listitem>
+				<listitem>
 				<para><emphasis>TLSv1_2</emphasis> - means &osips; will
 				accept only TLSv1.2 connections (rfc3261 conformant).
 				</para>
@@ -224,17 +232,6 @@ listen = tls:1.2.3.4:5061
 				<listitem>
 				<para><emphasis>TLSv1</emphasis> - means &osips; will
 				accept only TLSv1 connections (rfc3261 conformant).
-				</para>
-				</listitem>
-				<listitem>
-				<para><emphasis>SSLv3</emphasis> - means &osips; will
-				accept only SSLv3 connections
-				</para>
-				</listitem>
-				<listitem>
-				<para><emphasis>SSLv2</emphasis> - means &osips; will
-				accept only SSLv2 connections (almost all old clients
-				support this).
 				</para>
 				</listitem>
 				<listitem>
@@ -249,13 +246,14 @@ listen = tls:1.2.3.4:5061
 				</listitem>
 			</itemizedlist>
 			<para><emphasis>
+				If you are using an OpenSSL library newer than 1.1.0, you can
+				also specify a range of accepted TLS versions.
+			</emphasis></para>
+			<para><emphasis>
 				Default value is SSLv23.
 			</emphasis></para>
 			<warning><para>
-			Best is to use SSLv23, for extended compatibility. Using any
-			of the other will restrict the version to just that one
-			version. In fact, SSLv2 is disabled in the source code; to
-			use it, you need to edit tls/tls_init.c
+			For extended compatibility with older system, best use SSLv23.
 			</para></warning>
 			<para>
 			If you want RFC3261 conformance and all your clients support
@@ -269,6 +267,14 @@ listen = tls:1.2.3.4:5061
 				<programlisting format="linespecific">
 ...
 modparam("tls_mgm", "tls_method", "[dom]TLSv1")
+...
+				</programlisting>
+			</example>
+			<example>
+				<title>Set <varname>tls_method</varname> range variable</title>
+				<programlisting format="linespecific">
+...
+modparam("tls_mgm", "tls_method", "[dom]TLSv1-TLSv1_3")
 ...
 				</programlisting>
 			</example>
@@ -341,10 +347,12 @@ modparam("tls_mgm", "ca_list", "[dom]/mycerts/certs/ca_list.pem")
 		<section id="param_ca_dir" xreflabel="ca_dir">
 			<title><varname>ca_dir</varname> ([domain](string)</title>
 			<para>
-			Directory storing trusted CAs. The path contains the
-			certificates accepted, each as hash which is linked to
-			certificate file. The domain part represents
-			the name of the TLS domain.
+			Directory storing trusted CAs. The certificates in the directory
+			must be in hashed form, as described in the
+			<ulink url="https://www.openssl.org/docs/manmaster/man3/X509_LOOKUP_hash_dir.html">
+			<citetitle>openssl documentation</citetitle></ulink> for the
+			<emphasis>Hashed Directory Method</emphasis>. The domain part
+			represents the name of the TLS domain.
 			</para>
 			<para><emphasis>
 				Default value is "/etc/pki/CA/".
@@ -354,6 +362,45 @@ modparam("tls_mgm", "ca_list", "[dom]/mycerts/certs/ca_list.pem")
 				<programlisting format="linespecific">
 ...
 modparam("tls_mgm", "ca_dir", "[dom]/mycerts/certs")
+...
+				</programlisting>
+			</example>
+		</section>
+
+		<section id="param_crl_dir" xreflabel="crl_dir">
+			<title><varname>crl_dir</varname> ([domain](string)</title>
+			<para>
+			Directory storing certificate revocation lists (CRLs). The domain
+			part represents the name of the TLS domain.
+			</para>
+			<para><emphasis>
+				If this parameter is not set, no CRLs will be used.
+			</emphasis></para>
+			<example>
+				<title>Set <varname>crl_dir</varname> variable</title>
+				<programlisting format="linespecific">
+...
+modparam("tls_mgm", "crl_dir", "[dom]/mycerts/crls")
+...
+				</programlisting>
+			</example>
+		</section>
+
+		<section id="param_crl_check_all" xreflabel="crl_check_all">
+			<title><varname>crl_check_all</varname> ([domain](string)</title>
+			<para>
+			Setting this parameter with a non-zero integer value enables CRL
+			checking for the entire certificate chain.
+			</para>
+			<para><emphasis>
+				By default, only the leaf certificate in the certificate chain
+				is checked.
+			</emphasis></para>
+			<example>
+				<title>Set <varname>crl_check_all</varname> variable</title>
+				<programlisting format="linespecific">
+...
+modparam("tls_mgm", "crl_check_all", "[dom]1")
 ...
 				</programlisting>
 			</example>
@@ -431,80 +478,42 @@ modparam("tls_mgm", "dh_params", "[dom]/etc/pki/CA/dh1024.pem")
 		</section>
 
 		<section id="param_verify_cert" xreflabel="verify_cert">
-			<title><varname>verify_cert</varname> ([domain](string) and
-				<varname>require_cert</varname> ([domain](string)</title>
+			<title><varname>verify_cert</varname> ([domain](string)</title>
 			<para>
-			Technically, verify_cert activates SSL_VERIFY_PEER in the
-			ssl_context. 'require_cert' does the same with
-			SSL_VERIFY_FAIL_IF_NO_PEER_CERT, which is only possible if
-			SSL_VERIFY_PEER is also turned on. Since version 2.1, these 
-			parameters act have been reduced to only one. The domain part
-			represents the name of the TLS domain.
+			Activates SSL_VERIFY_PEER in the ssl_context. For a detailed
+			explanation, check the <emphasis>openssl</emphasis> documentation.
 			</para>
+			<para>The domain part represents the name of the TLS domain.</para>
 			<para>
-			These two parameters are used for incoming TLS connections, where
-			&osips; acts as server.
+				Default value is <emphasis>1</emphasis>.
 			</para>
-			<para>
-			It's usable only if TLS support was compiled.
-			</para>
-			<para><emphasis>
-				Default value for both is 1.
-			</emphasis></para>
 			<example>
-				<title>Set <varname>verify_cert &amp; require_cert
-					</varname> variable</title>
+				<title>Set <varname>verify_cert</varname> variable</title>
 				<programlisting format="linespecific">
 ...
-# turn on the strictest and strongest authentication possible
-modparam("tls_mgm", "require_cert", "[dom]0")
 modparam("tls_mgm", "verify_cert", "[dom]0")
 ...
 				</programlisting>
 			</example>
 		</section>
 
-		<section id="param_tls_handshake_timeout" xreflabel="tls_handshake_timeout">
-			<title><varname>tls_handshake_timeout</varname> (integer)</title>
+		<section id="param_require_cert" xreflabel="require_cert">
+			<title><varname>require_cert</varname> ([domain](string)</title>
 			<para>
-			Sets the timeout (in milliseconds) for the handshake sequence to complete.
-				It may be necessary to increase this value when using a CPU intensive cipher
-				for the connection to allow time for keys to be generated and processed.
+			Activates SSL_VERIFY_FAIL_IF_NO_PEER_CERT in the ssl_context. For a
+			detailed explanation, check the <emphasis>openssl</emphasis>
+			documentation. This parameter only makes sense for server domains
+			and if the <xref linkend="param_verify_cert"/> parameter is also set.
 			</para>
+			<para>The domain part represents the name of the TLS domain.</para>
 			<para>
-			The timeout is invoked during acceptance of a new connection (inbound) and
-				during the wait period when a new session is being initiated (outbound).
+				Default value is <emphasis>1</emphasis>.
 			</para>
-			<para><emphasis>
-				Default value is 100.
-			</emphasis></para>
 			<example>
-				<title>Set <varname>tls_handshake_timeout</varname> variable</title>
+				<title>Set <varname>require_cert</varname> variable</title>
 				<programlisting format="linespecific">
 ...
-modparam("tls_mgm", "tls_handshake_timeout", 200) # number of milliseconds
-...
-				</programlisting>
-			</example>
-		</section>
-
-		<section id="param_tls_send_timeout" xreflabel="tls_send_timeout">
-			<title><varname>tls_send_timeout</varname> (integer)</title>
-			<para>
-				Sets the timeout (in milliseconds) for the send operations to complete
-			</para>
-			<para>
-				The send timeout is invoked for all TLS write operations, excluding
-				the handshake process (see: tls_handshake_timeout)
-			</para>
-			<para><emphasis>
-				Default value is 100.
-			</emphasis></para>
-			<example>
-				<title>Set <varname>tls_send_timeout</varname> variable</title>
-				<programlisting format="linespecific">
-...
-modparam("tls_mgm", "tls_send_timeout", 200) # number of milliseconds
+modparam("tls_mgm", "require_cert", "[dom]0")
 ...
 				</programlisting>
 			</example>

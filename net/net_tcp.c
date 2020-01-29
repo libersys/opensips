@@ -740,9 +740,11 @@ static void _tcpconn_rm(struct tcp_connection* c)
 	if (protos[c->type].net.conn_clean)
 		protos[c->type].net.conn_clean(c);
 
+#ifdef DBG_TCPCON
 	sh_log(c->hist, TCP_DESTROY, "type=%d", c->type);
-	sh_unref(c->hist, con_hist);
+	sh_unref(c->hist);
 	c->hist = NULL;
+#endif
 
 	shm_free(c);
 }
@@ -834,7 +836,7 @@ error_sec:
 void tcpconn_put(struct tcp_connection* c)
 {
 	TCPCONN_LOCK(c->id);
-	c->refcnt--; /* FIXME: atomic_dec */
+	c->refcnt--;
 	TCPCONN_UNLOCK(c->id);
 }
 
@@ -842,7 +844,7 @@ void tcpconn_put(struct tcp_connection* c)
 static inline void tcpconn_ref(struct tcp_connection* c)
 {
 	TCPCONN_LOCK(c->id);
-	c->refcnt++; /* FIXME: atomic_dec */
+	c->refcnt++;
 	TCPCONN_UNLOCK(c->id);
 }
 
@@ -893,19 +895,13 @@ static struct tcp_connection* tcpconn_new(int sock, union sockaddr_union* su,
 	/* start with the default conn lifetime */
 	c->lifetime = get_ticks()+tcp_con_lifetime;
 	c->flags|=F_CONN_REMOVED|flags;
+#ifdef DBG_TCPCON
 	c->hist = sh_push(c, con_hist);
-
-	if (protos[si->proto].net.conn_init &&
-	protos[si->proto].net.conn_init(c)<0) {
-		LM_ERR("failed to do proto %d specific init for conn %p\n",
-			si->proto,c);
-		goto error1;
-	}
+#endif
 
 	tcp_connections_no++;
 	return c;
 
-error1:
 	lock_destroy(&c->write_lock);
 error0:
 	shm_free(c);
@@ -927,6 +923,15 @@ struct tcp_connection* tcp_conn_create(int sock, union sockaddr_union* su,
 	c = tcp_conn_new(sock, su, si, state);
 	if (c==NULL)
 		return NULL;
+
+	if (protos[c->type].net.conn_init &&
+			protos[c->type].net.conn_init(c) < 0) {
+		LM_ERR("failed to do proto %d specific init for conn %p\n",
+				c->type, c);
+		tcp_conn_destroy(c);
+		return NULL;
+	}
+	c->flags |= F_CONN_INIT;
 
 	return (tcp_conn_send(c) == 0 ? c : NULL);
 }
@@ -1149,7 +1154,7 @@ inline static int handle_tcpconn_ev(struct tcp_connection* tcpconn, int fd_i,
 		/* we received a write event */
 		if (tcpconn->state==S_CONN_CONNECTING) {
 			/* we're coming from an async connect & write
-			 * let's see if we connected successfully*/
+			 * let's see if we connected successfully */
 			err_len=sizeof(err);
 			if (getsockopt(tcpconn->s, SOL_SOCKET, SO_ERROR, &err, &err_len) < 0 || \
 					err != 0) {
@@ -1355,7 +1360,7 @@ error:
  *          - -1 on error reading from the fd,
  *          -  0 on EAGAIN  or when no  more io events are queued
  *             (receive buffer empty),
- *          -  >0 on successfull reads from the fd (the receive buffer might
+ *          -  >0 on successful reads from the fd (the receive buffer might
  *             be non-empty).
  */
 inline static int handle_worker(struct process_table* p, int fd_i)
@@ -1422,6 +1427,7 @@ inline static int handle_worker(struct process_table* p, int fd_i)
 	}
 	switch(cmd){
 		case CONN_ERROR:
+		case CONN_ERROR2:
 			/* remove from reactor only if the fd exists, and it wasn't
 			 * removed before */
 			if ((tcpconn->flags & F_CONN_REMOVED) != F_CONN_REMOVED &&
@@ -1505,7 +1511,7 @@ error:
  *            io events are queued on the fd (the receive buffer is empty).
  *            Usefull to detect when there are no more io events queued for
  *            sigio_rt, epoll_et, kqueue.
- *         >0 on successfull read from the fd (when there might be more io
+ *         >0 on successful read from the fd (when there might be more io
  *            queued -- the receive buffer might still be non-empty)
  */
 inline static int handle_io(struct fd_map* fm, int idx,int event_type)
@@ -1723,7 +1729,7 @@ int tcp_init(void)
 		return 0;
 
 #ifdef DBG_TCPCON
-	con_hist = shl_init("TCP con", 10000);
+	con_hist = shl_init("TCP con", 10000, 1);
 	if (!con_hist) {
 		LM_ERR("oom con hist\n");
 		goto error;
@@ -2138,7 +2144,7 @@ mi_response_t *mi_tcp_list_conns(const mi_params_t *params,
 	time_t _ts;
 	char date_buf[MI_DATE_BUF_LEN];
 	int date_buf_len;
-	unsigned int i,part;
+	unsigned int i,j,part;
 	char proto[PROTO_NAME_MAX_SIZE];
 	struct tm ltime;
 	char *p;
@@ -2202,6 +2208,12 @@ mi_response_t *mi_tcp_list_conns(const mi_params_t *params,
 					if (add_mi_number(conn_item, MI_SSTR("Lifetime"), _ts) < 0)
 						goto error;
 				}
+
+				/* add the port-aliases */
+				for( j=0 ; j<conn->aliases ; j++ )
+					/* add one node for each conn */
+					add_mi_number( conn_item, MI_SSTR("Alias port"),
+						conn->con_aliases[j].port );
 			}
 		}
 

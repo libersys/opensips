@@ -88,7 +88,7 @@ static mi_response_t *mi_uptime(const mi_params_t *params,
 		up_since_ctime.s, up_since_ctime.len) < 0)
 		goto error;
 
-	if (add_mi_string_fmt(resp, MI_SSTR("Up time"), "%lu [sec]",
+	if (add_mi_string_fmt(resp_obj, MI_SSTR("Up time"), "%lu [sec]",
 		(unsigned long)difftime(now, startup_time)) < 0)
 		goto error;
 
@@ -573,7 +573,7 @@ static mi_response_t *mi_cachefetch(const mi_params_t *params,
 	}
 
 	if(ret == -2 || value.s == 0 || value.len == 0)
-		return init_mi_result_string(MI_SSTR("Value not found"));
+		return init_mi_error(400, MI_SSTR("Value not found"));
 
 	resp = init_mi_result_object(&resp_obj);
 	if (!resp) {
@@ -859,6 +859,13 @@ static mi_export_t mi_core_cmds[] = {
 		{w_mi_subscribers_list, {0}},
 		{w_mi_subscribers_list_1, {"event", 0}},
 		{w_mi_subscribers_list_2, {"event", "socket", 0}},
+		{EMPTY_MI_RECIPE}
+		}
+	},
+	{ "raise_event", "raises an event through the Event Interface; "
+		"Params: event [ params ]", 0, 0, {
+		{w_mi_raise_event, {"event", 0}},
+		{w_mi_raise_event, {"event", "params", 0}},
 		{EMPTY_MI_RECIPE}
 		}
 	},

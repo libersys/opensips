@@ -43,11 +43,10 @@
 #endif
 
 unsigned rmq_sync_mode = 0;
+struct timeval conn_timeout_tv;
 
 /* used to communicate with the sending process */
 static int rmq_pipe[2];
-/* used to communicate the status of the send (success or fail) from the sending process back to the requesting ones */
-static int (*rmq_status_pipes)[2];
 
 /* creates communication pipe */
 int rmq_create_pipe(void)
@@ -64,37 +63,6 @@ int rmq_create_pipe(void)
 		LM_ERR("cannot create status pipe [%d:%s]\n", errno, strerror(errno));
 		return -1;
 	}
-
-	if (rmq_sync_mode && rmq_create_status_pipes() < 0) {
-		LM_ERR("cannot create communication status pipes\n");
-		return -1;
-	}
-
-	return 0;
-}
-
-/* creates status pipes */
-int rmq_create_status_pipes(void) {
-	int rc, i;
-
-	rmq_status_pipes = shm_malloc(counted_max_processes * sizeof(rmq_pipe));
-
-	if (!rmq_status_pipes) {
-		LM_ERR("cannot allocate rmq_status_pipes\n");
-		return -1;
-	}
-
-	/* create pipes */
-	for (i = 0; i < counted_max_processes; i++) {
-		do {
-			rc = pipe(rmq_status_pipes[i]);
-		} while (rc < 0 && IS_ERR(EINTR));
-
-		if (rc < 0) {
-			LM_ERR("cannot create status pipe [%d:%s]\n", errno, strerror(errno));
-			return -1;
-		}
-	}
 	return 0;
 }
 
@@ -104,21 +72,6 @@ void rmq_destroy_pipe(void)
 		close(rmq_pipe[0]);
 	if (rmq_pipe[1] != -1)
 		close(rmq_pipe[1]);
-
-	if (rmq_sync_mode)
-		rmq_destroy_status_pipes();
-}
-
-void rmq_destroy_status_pipes(void)
-{
-	int i;
-
-	for(i = 0; i < counted_max_processes; i++) {
-		close(rmq_status_pipes[i][0]);
-		close(rmq_status_pipes[i][1]);
-	}
-
-	shm_free(rmq_status_pipes);
 }
 
 int rmq_send(rmq_send_t* rmqs)
@@ -142,13 +95,7 @@ int rmq_send(rmq_send_t* rmqs)
 	sched_yield();
 
 	if (rmq_sync_mode) {
-		retries = RMQ_SEND_RETRY;
-
-		do {
-			rc = read(rmq_status_pipes[process_no][0], &send_status, sizeof(int));
-		} while (rc < 0 && (IS_ERR(EINTR) || retries-- > 0));
-
-		if (rc < 0) {
+		if (ipc_recv_sync_reply((void **)(long *)&send_status) < 0) {
 			LM_ERR("cannot receive send status\n");
 			send_status = RMQ_SEND_FAIL;
 		}
@@ -187,9 +134,6 @@ int rmq_init_writer(void)
 		rmq_pipe[0] = -1;
 	}
 
-	if (rmq_sync_mode)
-		close(rmq_status_pipes[process_no][1]);
-
 	/* Turn non-blocking mode on for sending*/
 	flags = fcntl(rmq_pipe[1], F_GETFL);
 	if (flags == -1) {
@@ -210,30 +154,10 @@ error:
 
 static void rmq_init_reader(void)
 {
-	int i, flags;
-
 	if (rmq_pipe[1] != -1) {
 		close(rmq_pipe[1]);
 		rmq_pipe[1] = -1;
 	}
-
-	if (rmq_sync_mode)
-		for(i = 0; i < counted_max_processes; i++) {
-			close(rmq_status_pipes[i][0]);
-
-			/* Turn non-blocking mode on for sending*/
-			flags = fcntl(rmq_status_pipes[i][1], F_GETFL);
-			if (flags == -1) {
-				LM_ERR("fcntl failed: %s\n", strerror(errno));
-				close(rmq_status_pipes[i][1]);
-				return;
-			}
-			if (fcntl(rmq_status_pipes[i][1], F_SETFL, flags | O_NONBLOCK) == -1) {
-				LM_ERR("fcntl: set non-blocking failed: %s\n", strerror(errno));
-				close(rmq_status_pipes[i][1]);
-				return;
-			}
-		}
 }
 
 /* function that checks for error */
@@ -365,13 +289,15 @@ static int rmq_reconnect(evi_reply_sock *sock)
 			LM_ERR("cannot create AMQP socket\n");
 			goto destroy_rmqp;
 		}
-		socket = amqp_socket_open(amqp_sock, sock->address.s, sock->port);
+		socket = amqp_socket_open_noblock(amqp_sock, sock->address.s,
+			sock->port, &conn_timeout_tv);
 		if (socket < 0) {
 			LM_ERR("cannot open AMQP socket\n");
 			goto destroy_rmqp;
 		}
 #else
-		socket = amqp_open_socket(sock->address.s, sock->port);
+		socket = amqp_open_socket_noblock(sock->address.s, sock->port,
+			&conn_timeout_tv);
 		if (socket < 0) {
 			LM_ERR("cannot open AMQP socket\n");
 			goto destroy_rmqp;
@@ -512,7 +438,6 @@ static int rmq_sendmsg(rmq_send_t *rmqs)
 
 void rmq_process(int rank)
 {
-	int retries, rc;
 	int send_status;
 
 	/* init blocking reader */
@@ -549,16 +474,8 @@ void rmq_process(int rank)
 
 send_status_reply:
 		if (rmq_sync_mode) {
-			retries = RMQ_SEND_RETRY;
-
-			/* check rmqs->process_idx sanity */
-			if (rmqs->process_idx >= 0 && rmqs->process_idx < counted_max_processes) {
-				do {
-					rc = write(rmq_status_pipes[rmqs->process_idx][1], &send_status, sizeof(int));
-				} while (rc < 0 && (IS_ERR(EINTR) || retries-- > 0));
-				if (rc < 0)
-					LM_ERR("cannot send status back to requesting process\n");
-			}
+			if (ipc_send_sync_reply(rmqs->process_idx, (void *)(long)send_status) < 0)
+				LM_ERR("cannot send status back to requesting process\n");
 		}
 end:
 		if (rmqs)

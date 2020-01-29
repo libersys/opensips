@@ -73,7 +73,7 @@ struct acc_enviroment acc_env;
 static query_list_t *acc_ins_list = NULL;
 static query_list_t *mc_ins_list = NULL;
 
-static int is_cdr_enabled=0;
+int is_cdr_enabled=0;
 
 #define is_acc_flag_set(_mask, _type, _flag) ( _mask & ((_type * _flag)))
 
@@ -199,12 +199,12 @@ static inline void free_acc_ctx(acc_ctx_t* ctx)
 	}
 	if (ctx->acc_table.s)
 		shm_free(ctx->acc_table.s);
-	shm_free(ctx);
 
 	/* also cleanup dialog */
 	dlg = dlg_api.get_dlg ? dlg_api.get_dlg() : NULL;
-	if (dlg)
+	if (dlg && ctx == dlg_api.dlg_ctx_get_ptr(dlg, acc_dlg_ctx_idx))
 		dlg_api.dlg_ctx_put_ptr(dlg, acc_dlg_ctx_idx, NULL);
+	shm_free(ctx);
 }
 
 static inline struct hdr_field* get_rpl_to( struct cell *t,
@@ -306,9 +306,12 @@ static inline void env_set_comment(struct acc_param *accp)
 	acc_env.reason = accp->reason;
 }
 
-static inline void env_set_event(event_id_t ev)
+static inline void env_set_event(event_id_t ev, evi_params_p params_list,
+	evi_param_p *params)
 {
 	acc_env.event = ev;
+	acc_env.ev_params_list = params_list;
+	acc_env.ev_params = params;
 }
 
 
@@ -381,14 +384,14 @@ int w_acc_db_request(struct sip_msg *rq, str* comment, str *table)
 	env_set_text(table->s, table->len);
 
 	if (str_strcmp(table, &db_table_mc) == 0) {
-		return acc_db_request(rq, NULL, &mc_ins_list, 0);
+		return acc_db_request(rq, NULL, &mc_ins_list, 0, 1);
 	}
 
 	if (str_strcmp(table, &db_table_acc) == 0) {
-		return acc_db_request(rq, NULL, &acc_ins_list, 0);
+		return acc_db_request(rq, NULL, &acc_ins_list, 0, 0);
 	}
 
-	return acc_db_request( rq, NULL,NULL, 0);
+	return acc_db_request( rq, NULL,NULL, 0, 0);
 }
 
 int w_acc_evi_request(struct sip_msg *rq, str* comment)
@@ -416,12 +419,13 @@ int w_acc_evi_request(struct sip_msg *rq, str* comment)
 	}
 #endif
 	if (acc_env.code < 300) {
-		env_set_event(acc_event);
+		env_set_event(acc_event, acc_event_params, evi_params);
+		return acc_evi_request( rq, NULL, 0, 0);
 	} else {
-		env_set_event(acc_missed_event);
+		env_set_event(acc_missed_event, acc_missed_event_params,
+			evi_missed_params);
+		return acc_evi_request( rq, NULL, 0, 1);
 	}
-
-	return acc_evi_request( rq, NULL, 0);
 }
 
 int acc_comm_to_acc_param(struct sip_msg* rq, str* comm, struct acc_param* accp)
@@ -535,8 +539,9 @@ static inline void on_missed(struct cell *t, struct sip_msg *req,
 	 */
 
 	if (is_evi_mc_on(*flags)) {
-		env_set_event(acc_missed_event);
-		acc_evi_request( req, reply, is_evi_cdr_on(*flags) );
+		env_set_event(acc_missed_event, acc_missed_event_params,
+			evi_missed_params);
+		acc_evi_request( req, reply, is_evi_cdr_on(*flags) ? 1 : 0, 1 );
 		flags_to_reset |= DO_ACC_EVI * DO_ACC_MISSED;
 	}
 
@@ -553,7 +558,7 @@ static inline void on_missed(struct cell *t, struct sip_msg *req,
 
 	if (is_db_mc_on(*flags)) {
 		env_set_text(db_table_mc.s, db_table_mc.len);
-		acc_db_request( req, reply,&mc_ins_list, is_db_cdr_on(*flags));
+		acc_db_request( req, reply,&mc_ins_list, is_db_cdr_on(*flags), 1);
 		flags_to_reset |= DO_ACC_DB * DO_ACC_MISSED;
 	}
 
@@ -687,14 +692,14 @@ void acc_loaded_callback(struct dlg_cell *dlg, int type,
 
 
 		/* replace the context value with a good pointer */
+		acc_ref_ex(ctx, 3);
 		dlg_api.dlg_ctx_put_ptr(dlg, acc_dlg_ctx_idx, ctx);
 
 		/* register database callbacks */
-		acc_ref_ex(ctx, 2);
 		if (dlg_api.register_dlgcb(dlg, DLGCB_TERMINATED |
 				DLGCB_EXPIRED, acc_dlg_ended, ctx, unref_acc_ctx)){
 			LM_ERR("cannot register callback for database accounting\n");
-			acc_unref_ex(ctx, 2);
+			acc_unref_ex(ctx, 2); /* storing the pointer was successful */
 			return;
 		}
 
@@ -768,9 +773,6 @@ static inline void acc_onreply( struct cell* t, struct sip_msg *req,
 			goto restore;
 		}
 
-		/* store context pointer into dialog */
-		dlg_api.dlg_ctx_put_ptr(dlg, acc_dlg_ctx_idx, ctx);
-
 		/* register callback for program shutdown or dialog replication
 		 * won't register free function since TERMINATED|EXPIRED callback
 		 * free function will be called to free */
@@ -800,8 +802,8 @@ static inline void acc_onreply( struct cell* t, struct sip_msg *req,
 	} else {
 		/* do old accounting */
 		if ( is_evi_acc_on(*flags) ) {
-			env_set_event(acc_event);
-			acc_evi_request( req, reply, 0 );
+			env_set_event(acc_event, acc_event_params, evi_params);
+			acc_evi_request( req, reply, 0, 0 );
 		}
 
 		if ( is_log_acc_on(*flags) ) {
@@ -814,7 +816,7 @@ static inline void acc_onreply( struct cell* t, struct sip_msg *req,
 
 		if (is_db_acc_on(*flags)) {
 			env_set_text( table.s, table.len);
-			acc_db_request( req, reply, &acc_ins_list, 0);
+			acc_db_request( req, reply, &acc_ins_list, 0, 0);
 		}
 	}
 
@@ -895,7 +897,7 @@ static void acc_dlg_ended(struct dlg_cell *dlg, int type,
 		}
 
 		if (is_evi_acc_on(ctx->flags)) {
-			env_set_event(acc_cdr_event);
+			env_set_event(acc_cdr_event, acc_cdr_event_params, evi_cdr_params);
 			if (acc_evi_cdrs(dlg, _params->msg, ctx) < 0) {
 				LM_ERR("cannot send accounting events\n");
 				return;
@@ -992,7 +994,7 @@ static void acc_cdr_cb( struct cell* t, int type, struct tmcb_params *ps )
 	}
 
 	if (is_evi_acc_on(ctx->flags)) {
-		env_set_event(acc_cdr_event);
+		env_set_event(acc_cdr_event, acc_cdr_event_params, evi_cdr_params);
 		if (acc_evi_cdrs(dlg, ps->req, ctx) < 0) {
 			LM_ERR("cannot send accounting events\n");
 			return;
@@ -1003,7 +1005,7 @@ static void acc_cdr_cb( struct cell* t, int type, struct tmcb_params *ps )
 
 static void tmcb_func( struct cell* t, int type, struct tmcb_params *ps )
 {
-	acc_ctx_t* ctx = *ps->param;
+	acc_ctx_t *tmp_ctx, *ctx = *ps->param;
 
 	if (ACC_GET_TM_CTX(t) == NULL) {
 		acc_ref(ctx);
@@ -1015,6 +1017,15 @@ static void tmcb_func( struct cell* t, int type, struct tmcb_params *ps )
 	} else if (type&TMCB_ON_FAILURE) {
 		on_missed( t, ps->req, ps->rpl, ps->code, ctx);
 	} else if (type&TMCB_RESPONSE_IN) {
+		/* merge any context created within global "onreply_route" */
+		if ((tmp_ctx = ACC_GET_CTX()) && tmp_ctx != ctx) {
+			push_ctx_to_ctx(tmp_ctx, ctx);
+			acc_unref(tmp_ctx);
+
+			acc_ref(ctx);
+			ACC_PUT_CTX(ctx);
+		}
+
 		acc_onreply_in( t, ps->req, ps->rpl, ps->code, ctx);
 	}
 }
@@ -1085,22 +1096,8 @@ unsigned long long do_acc_flags_parser(str* token)
 			!strncasecmp(token->s, do_acc_cdr_s.s, token->len)) {
 
 		if (!is_cdr_enabled) {
-			if (load_dlg_api(&dlg_api)!=0)
-						LM_DBG("failed to find dialog API - is dialog module loaded?\n");
-
-			if (!dlg_api.get_dlg) {
-				LM_WARN("error loading dialog module - cdrs cannot be generated\n");
-				return DO_ACC_NONE;
-			}
-
-			if (dlg_api.get_dlg && dlg_api.register_dlgcb(NULL,
-						DLGCB_LOADED,acc_loaded_callback, NULL, NULL) < 0)
-					LM_ERR("cannot register callback for dialog loaded - accounting "
-							"for ongoing calls will be lost after restart\n");
-
-			acc_dlg_ctx_idx = dlg_api.dlg_ctx_register_ptr(NULL);
-
-			is_cdr_enabled=1;
+			LM_ERR("dialog module not loaded - cdrs cannot be generated\n");
+			return DO_ACC_NONE;
 		}
 
 		return DO_ACC_CDR;
@@ -1247,6 +1244,7 @@ int w_do_acc(struct sip_msg* msg, unsigned long long *type,
 			unsigned long long *flags, str *table_name)
 {
 	unsigned long long flag_mask;
+	struct dlg_cell *dlg;
 
 	acc_ctx_t* acc_ctx;
 
@@ -1301,9 +1299,13 @@ int w_do_acc(struct sip_msg* msg, unsigned long long *type,
 			if (!has_totag(msg)) {
 				acc_ctx->created = time(NULL);
 
-				if (msg->REQ_METHOD == METHOD_INVITE && create_acc_dlg(msg) < 0) {
-					LM_ERR("cannot use dialog accounting module\n");
-					return -1;
+				if (msg->REQ_METHOD == METHOD_INVITE) {
+					if ((dlg = create_acc_dlg(msg)) == 0) {
+						LM_ERR("cannot use dialog accounting module\n");
+						return -1;
+					}
+					acc_ref(acc_ctx);
+					dlg_api.dlg_ctx_put_ptr(dlg, acc_dlg_ctx_idx, acc_ctx);
 				}
 			}
 		}
@@ -1356,9 +1358,13 @@ int w_do_acc(struct sip_msg* msg, unsigned long long *type,
 		if (is_cdr_acc_on(acc_ctx->flags) && !has_totag(msg)) {
 			acc_ctx->created = time(NULL);
 
-			if (is_invite && create_acc_dlg(msg) < 0) {
-				LM_ERR("cannot use dialog accounting module\n");
-				return -1;
+			if (is_invite) {
+				if ((dlg = create_acc_dlg(msg)) == 0) {
+					LM_ERR("cannot use dialog accounting module\n");
+					return -1;
+				}
+				acc_ref(acc_ctx);
+				dlg_api.dlg_ctx_put_ptr(dlg, acc_dlg_ctx_idx, acc_ctx);
 			}
 		}
 

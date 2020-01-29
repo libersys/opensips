@@ -46,9 +46,6 @@ skip_modules?=
 # whether or not to overwrite TLS certificates
 tls_overwrite_certs?=
 
-# default debian version when running 'make deb'
-DEBIAN_VERSION ?= jessie #TODO: can we determine this?
-
 makefile_defs=0
 DEFS:= $(DEFS_EXTRA_OPTS)
 DEBUG_PARSER?=
@@ -468,7 +465,7 @@ sunpkg:
 
 .PHONY: install-app install-modules-all install
 # Install app only, excluding console, modules and module docs
-install-app: app mk-install-dirs install-cfg install-bin \
+install-app: mk-install-dirs install-cfg install-bin \
 	install-app-doc install-man
 
 # Install all module stuff (except modules-docbook?)
@@ -514,7 +511,7 @@ install-cfg: $(cfg_prefix)/$(cfg_dir)
 				$(cfg_prefix)/$(cfg_dir)$(NAME).cfg; \
 		fi
 
-install-bin: $(bin_prefix)/$(bin_dir) opensipsmc utils
+install-bin: app $(bin_prefix)/$(bin_dir) opensipsmc utils
 		# install opensips binary
 		$(INSTALL_TOUCH) $(bin_prefix)/$(bin_dir)/$(NAME)
 		$(INSTALL_BIN) $(NAME) $(bin_prefix)/$(bin_dir)

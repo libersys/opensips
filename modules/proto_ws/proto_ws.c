@@ -115,7 +115,7 @@ static param_export_t params[] = {
 	{ "ws_port",           INT_PARAM, &ws_port           },
 	{ "ws_max_msg_chunks", INT_PARAM, &ws_max_msg_chunks },
 	{ "ws_send_timeout",   INT_PARAM, &ws_send_timeout   },
-	{ "ws_resource",       STR_PARAM, &ws_resource       },
+	{ "ws_resource",       STR_PARAM, &ws_resource.s     },
 	{ "ws_handshake_timeout", INT_PARAM, &ws_hs_read_tout },
 	{ "trace_destination",     STR_PARAM,         &trace_destination_name.s  },
 	{ "trace_on",						 INT_PARAM, &trace_is_on_tmp        },
@@ -149,7 +149,7 @@ struct module_exports exports = {
 	MODULE_VERSION,
 	DEFAULT_DLFLAGS, /* dlopen flags */
 	0,				 /* load function */
-	&deps,            /* OpenSIPS module dependencies */
+	&deps,           /* OpenSIPS module dependencies */
 	cmds,       /* exported functions */
 	0,          /* exported async functions */
 	params,     /* module parameters */
@@ -158,6 +158,7 @@ struct module_exports exports = {
 	0,          /* exported pseudo-variables */
 	0,			/* exported transformations */
 	0,          /* extra processes */
+	0,          /* module pre-initialization function */
 	mod_init,   /* module initialization function */
 	0,          /* response function */
 	0,          /* destroy function */
@@ -191,6 +192,8 @@ static int proto_ws_init(struct proto_info *pi)
 static int mod_init(void)
 {
 	LM_INFO("initializing WebSocket protocol\n");
+
+	ws_resource.len = strlen(ws_resource.s);
 
 	if (trace_destination_name.s) {
 		if ( !net_trace_api ) {

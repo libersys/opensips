@@ -39,17 +39,7 @@
 #include "sipwatch.h"
 #include "sipdatetime.h"
 #include "sipstate.h"
-
-static const luaL_Reg siplua_libs[] = {
-  {"", luaopen_base},
-  {"string", luaopen_string},
-  {"os", luaopen_os},
-  {"table", luaopen_table},
-  {"math", luaopen_math},
-  {"io", luaopen_io},
-  {"package", luaopen_package},
-  {NULL, NULL}
-};
+#include "compat.h"
 
 static const char *sipstate_filename;
 static int sipstate_time;
@@ -174,7 +164,7 @@ static int l_sipstate_print(lua_State *L)
   for (i = 0; i < top; ++i)
     {
       str = luaL_checklstring(L, i + 1, &len);
-      siplua_log(L_ALERT, "%.*s", (int)len, str);
+      siplua_log(L_ALERT, "%.*s\n", (int)len, str);
     }
   return 0;
 }
@@ -307,7 +297,7 @@ static int l_sipstate_setCoreDebug(lua_State *L)
   return 0;
 }
 
-static const struct luaL_reg siplua_state_mylib [] =
+static const struct luaL_Reg siplua_state_mylib [] =
   {
     {"xlog", l_sipstate_xlog},
     {"xdbg", l_sipstate_xdbg},
@@ -327,45 +317,31 @@ static const struct luaL_reg siplua_state_mylib [] =
 
 static void siplua_register_state_cclosures(lua_State *L)
 {
-  lua_pushvalue(L, LUA_GLOBALSINDEX);
-  luaL_openlib(L, NULL, siplua_state_mylib, 0);
+  lua_pushglobaltable(L);
+  luaL_openlib(L, "opensips", siplua_state_mylib, 0);
   lua_remove(L, -1);
 }
 
 int sipstate_open(char *allocator)
 {
   lua_State *L;
-  const luaL_Reg *lib = siplua_libs;
-  const char *errmsg;
-
   if (!strcmp(allocator, "opensips"))
     L = lua_newstate(siplua_lua_Alloc, NULL);
   else if (!strcmp(allocator, "malloc"))
     L = lua_newstate(siplua_lua_Alloc2, NULL);
   else
     {
-      siplua_log(L_ERR, "Unknown Lua memory allocator");
+      siplua_log(L_ERR, "Unknown Lua memory allocator\n");
       return -1;
     }
   if (!(siplua_L = L))
     {
-      siplua_log(L_ERR, "Failed to open Lua state");
+      siplua_log(L_ERR, "Failed to open Lua state\n");
       return -1;
     }
   else
-    siplua_log(L_DBG, "Lua state opened");
-  for (; lib->func; lib++) {
-    lua_pushcfunction(L, lib->func);
-    lua_pushstring(L, lib->name);
-    if (lua_pcall(L, 1, 0, 0))
-      {
-	errmsg = lua_tostring(L, -1);
-	siplua_log(L_ERR, "Error loading library `%s': %s", lib->name, errmsg);
-	lua_remove(L, -1);
-	sipstate_close();
-	return -1;
-      }
-  }
+    siplua_log(L_DBG, "Lua state opened\n");
+  luaL_openlibs(L);
   siplua_register_state_cclosures(L);
   siplua_register_api_cclosures(L);
   siplua_register_mysql_cclosures(L);
@@ -394,7 +370,7 @@ int sipstate_load(const char *filename)
     filename = sipstate_filename;
   if (!filename)
     {
-      siplua_log(L_ERR, "siplua Lua filename is NULL");
+      siplua_log(L_ERR, "siplua Lua filename is NULL\n");
       return -1;
     }
   ret = stat(filename, &sb);
@@ -404,13 +380,13 @@ int sipstate_load(const char *filename)
   if (luaL_loadfile(L, filename) || lua_pcall(L, 0, 0, 0))
     {
       errmsg = lua_tostring(L, -1);
-      siplua_log(L_ERR, "siplua error loading file %s: %s", filename, errmsg);
+      siplua_log(L_ERR, "siplua error loading file %s: %s\n", filename, errmsg);
       lua_remove(L, -1);
       return -1;
     }
   else
     {
-      siplua_log(L_INFO, "siplua file %s successfully reloaded", filename);
+      siplua_log(L_INFO, "siplua file %s successfully reloaded\n", filename);
       sipstate_filename = filename;
       sipstate_time = sb.st_mtime;
       return 0;
@@ -450,7 +426,7 @@ int sipstate_call(struct sip_msg *msg, const str *_fnc_s, const str *_mystr_s)
   lua_getglobal(L, fnc);
   if (lua_isnil(L, -1))
     {
-      siplua_log(L_ERR, "siplua Lua function %s is nil", fnc);
+      siplua_log(L_ERR, "siplua Lua function %s is nil\n", fnc);
       lua_remove(L, -1);
       return -1;
     }
@@ -462,7 +438,7 @@ int sipstate_call(struct sip_msg *msg, const str *_fnc_s, const str *_mystr_s)
   if (lua_pcall(siplua_L, (mystr ? 2 : 1), 1, 0))
     {
       errmsg = lua_tostring(L, -1);
-      siplua_log(L_ERR, "siplua error running function %s: %s", fnc, errmsg);
+      siplua_log(L_ERR, "siplua error running function %s: %s\n", fnc, errmsg);
       lua_remove(L, -1);
       n = -1;
     }

@@ -130,7 +130,7 @@ static param_export_t params[]= {
 	{"timer_interval",	INT_PARAM,			&timer_interval},
 	{"enable_clustering",	INT_PARAM,			&enable_clustering},
 	{"db_url",		STR_PARAM,			&db_url.s},
-	{"table_name",		STR_PARAM,			&reg_table_name},
+	{"table_name",		STR_PARAM,			&reg_table_name.s},
 	{"registrar_column",	STR_PARAM,			&registrar_column.s},
 	{"proxy_column",	STR_PARAM,			&proxy_column.s},
 	{"aor_column",		STR_PARAM,			&aor_column.s},
@@ -178,15 +178,16 @@ struct module_exports exports= {
 	MODULE_VERSION,			/* module version */
 	DEFAULT_DLFLAGS,		/* dlopen flags */
 	0,						/* load function */
-	&deps,                  /* OpenSIPS module dependencies */
-	0,				/* exported functions */
+	&deps,					/* OpenSIPS module dependencies */
+	0,					/* exported functions */
 	0,					/* exported async functions */
 	params,				/* exported parameters */
 	NULL,				/* exported statistics */
 	mi_cmds,			/* exported MI functions */
 	NULL,				/* exported pseudo-variables */
 	0,					/* exported transformations */
-	0,				/* extra processes */
+	0,					/* extra processes */
+	0,					/* module pre-initialization function */
 	mod_init,			/* module initialization function */
 	(response_function) NULL,	/* response handling function */
 	(destroy_function) mod_destroy,	/* destroy function */
@@ -307,6 +308,7 @@ struct reg_tm_cback_data {
 int run_reg_tm_cback(void *e_data, void *data, void *r_data)
 {
 	struct sip_msg *msg;
+	str msg_body;
 	int statuscode = 0;
 	unsigned int exp = 0;
 	unsigned int bindings_counter = 0;
@@ -526,9 +528,14 @@ int run_reg_tm_cback(void *e_data, void *data, void *r_data)
 		crd.user.s = rec->auth_user.s; crd.user.len = rec->auth_user.len;
 		crd.passwd.s = rec->auth_password.s; crd.passwd.len = rec->auth_password.len;
 
+		if ((auth->flags & QOP_AUTH_INT) && get_body(msg, &msg_body) < 0) {
+			LM_ERR("Failed to get message body\n");
+			goto done;
+		}
+
 		memset(&auth_nc_cnonce, 0, sizeof(struct authenticate_nc_cnonce));
-		uac_auth_api._do_uac_auth(&register_method, &rec->td.rem_target, &crd,
-					auth, &auth_nc_cnonce, response);
+		uac_auth_api._do_uac_auth(&msg_body, &register_method,
+					&rec->td.rem_target, &crd, auth, &auth_nc_cnonce, response);
 		new_hdr = uac_auth_api._build_authorization_hdr(statuscode, &rec->td.rem_target,
 					&crd, auth, &auth_nc_cnonce, response);
 		if (!new_hdr) {

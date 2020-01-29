@@ -28,12 +28,16 @@
 #define CLUSTERER_H
 
 #include "../../mi/item.h"
+#include "../../timer.h"
 #include "api.h"
 
 #define BIN_VERSION 1
+#define BIN_SYNC_VERSION 2
 #define DEFAULT_PING_INTERVAL 4
 #define DEFAULT_NODE_TIMEOUT 60
 #define DEFAULT_PING_TIMEOUT 1000 /* in milliseconds */
+#define DEFAULT_SEED_FB_INTERVAL 5
+#define SEED_FB_CHECK_INTERVAL 500 /* ms */
 #define UPDATE_MAX_PATH_LEN 25
 #define SMALL_MSG 300
 
@@ -93,6 +97,7 @@ struct local_cap {
 	struct buf_bin_pkt *pkt_q_front;
 	struct buf_bin_pkt *pkt_q_back;
 	struct buf_bin_pkt *pkt_q_cutpos;
+	struct timeval sync_req_time;
 	unsigned int flags;
 	struct local_cap *next;
 };
@@ -101,6 +106,13 @@ struct remote_cap {
 	str name;
 	unsigned int flags;
 	struct remote_cap *next;
+};
+
+struct packet_rpc_params {
+	struct capability_reg *cap;
+	int pkt_src_id;
+	int pkt_type;
+	str pkt_buf;
 };
 
 struct node_info;
@@ -125,6 +137,7 @@ extern str cl_internal_cap;
 extern str cl_extra_cap;
 
 void heartbeats_timer(void);
+void seed_fb_check_timer(utime_t ticks, void *param);
 
 void bin_rcv_cl_packets(bin_packet_t *packet, int packet_type,
 									struct receive_info *ri, void *att);
@@ -164,5 +177,7 @@ struct local_cap *dup_caps(struct local_cap *caps);
 int preserve_reg_caps(struct cluster_info *new_info);
 
 int run_rcv_mi_cmd(str *cmd_name, str *cmd_params_arr, int no_params);
+
+int ipc_dispatch_mod_packet(bin_packet_t *packet, struct capability_reg *cap);
 
 #endif  /* CLUSTERER_H */

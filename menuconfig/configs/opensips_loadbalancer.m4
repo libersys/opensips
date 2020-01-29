@@ -32,10 +32,6 @@ children=4
    lookup failures (default disabled) */
 #dns_try_ipv6=yes
 
-/* comment the next line to enable the auto discovery of local aliases
-   based on reverse DNS on IPs */
-auto_aliases=no
-
 
 listen=udp:127.0.0.1:5060   # CUSTOMIZE ME
 ifelse(ENABLE_TCP, `yes', `listen=tcp:127.0.0.1:5060   # CUSTOMIZE ME',`')
@@ -133,7 +129,6 @@ modparam("load_balancer", "probing_interval", 30)
 ')
 
 ifelse(USE_HTTP_MANAGEMENT_INTERFACE,`yes',`####  MI_HTTP module
-loadmodule "httpd.so"
 loadmodule "mi_http.so"
 ',`')
 

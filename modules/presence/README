@@ -22,7 +22,7 @@ Presence Module
               1.4.6. expires_offset (int)
               1.4.7. max_expires_subscribe (int)
               1.4.8. max_expires_publish (int)
-              1.4.9. server_address (str)
+              1.4.9. contact_user (str)
               1.4.10. enable_sphere_check (int)
               1.4.11. waiting_subs_daysno (int)
               1.4.12. mix_dialog_presence (int)
@@ -46,7 +46,7 @@ Presence Module
 
         1.6. Exported MI Functions
 
-              1.6.1. refreshWatchers
+              1.6.1. refresh_watchers
               1.6.2. cleanup
               1.6.3. pres_phtable_list
               1.6.4. subs_phtable_list
@@ -104,7 +104,7 @@ Presence Module
    1.6. Set expires_offset parameter
    1.7. Set max_expires_subscribe parameter
    1.8. Set max_expires_publish parameter
-   1.9. Set server_address parameter
+   1.9. Set contact_user parameter
    1.10. Set enable_sphere_check parameter
    1.11. Set waiting_subs_daysno parameter
    1.12. Set mix_dialog_presence parameter
@@ -228,10 +228,23 @@ modparam("presence", "cluster_id", 2)
 1.4.4. cluster_federation_mode (int)
 
    When enabling the federation mode, the node inside the presence
-   cluster will start partitioning the data (each node will keep
-   its own data set) and exchange the minimimum of needed
-   information via the clustering support. A non-zero value means
-   enabled.
+   cluster will start broadcasting the data to other nodes in the
+   cluster via the clustering support. Each node will keep its own
+   data set. A non-zero value means enabled.
+
+   Possible values for mode:
+     * 0 (default) - no federation/partitioning.
+     * 1 - the minimum needed information is broadcast/kept.
+     * 2 - published state is kept on all presence nodes on all
+       presence nodes, even when there aren't any subscribers.
+
+   If you don't want to use a shared database using fallback2db,
+   but still want a complete data set everywhere, you may choose
+   mode 2.
+
+   This mode allows you to switch PUBLISH endpoints, even for
+   already published Event States, thus allowing you to add and
+   remove presence servers without losing state.
 
    For more on presence clustering see the Section 1.2, “Presence
    clustering” chapter.
@@ -294,21 +307,23 @@ modparam("presence", "max_expires_subscribe", 3600)
 modparam("presence", "max_expires_publish", 3600)
 ...
 
-1.4.9. server_address (str)
+1.4.9. contact_user (str)
 
-   The optional presence server URI address which will become the
-   value of Contact header filed for 200OK replies to Subscribe
-   and Publish and in Notify messages.
+   This is the username that will be used in the Contact header
+   for the 200 OK replies to SUBSCRIBE and in the following
+   in-dialog NOTIFY requests. The IP address, port and transport
+   for the Contact will be automatically determined based on the
+   interface where the SUBSCRIBE was received.
 
-   NOTE: this must be a fully formated SIP URI, with port and
-   transport parameter if the case.
+   If set to an empty string, no username will be added to the
+   contact and the contact will be built just out of the IP, port
+   and transport.
 
-   If not set (as it is by default), OpenSIPS will generate the
-   Contact URI based on the interface it received the SIP traffic.
+   Default value is “presence”.
 
-   Example 1.9. Set server_address parameter
+   Example 1.9. Set contact_user parameter
 ...
-modparam("presence", "server_address", "sip:10.10.10.10:5060")
+modparam("presence", "contact_user", "presence")
 ...
 
 1.4.10. enable_sphere_check (int)
@@ -597,12 +612,12 @@ if($rm=="SUBSCRIBE")
 
 1.6. Exported MI Functions
 
-1.6.1.  refreshWatchers
+1.6.1.  refresh_watchers
 
    Triggers sending Notify messages to watchers if a change in
    watchers authorization or in published state occurred.
 
-   Name: refreshWatchers
+   Name: refresh_watchers
 
    Parameters:
      * presentity_uri : the uri of the user who made the change
@@ -617,7 +632,7 @@ if($rm=="SUBSCRIBE")
             is set): refresh type!= 0.
 
    MI FIFO Command Format:
-opensips-cli -x mi refreshWatchers sip:11@192.168.2.132 presence 1
+opensips-cli -x mi refresh_watchers sip:11@192.168.2.132 presence 1
 
 1.6.2.  cleanup
 
@@ -1008,14 +1023,14 @@ Chapter 3. Contributors
    commits^(2) and lines added/removed^(3)
      Name DevScore Commits Lines ++ Lines --
    1. Anca Vamanu 663 247 24146 12623
-   2. Bogdan-Andrei Iancu (@bogdan-iancu) 135 80 2853 1761
-   3. Razvan Crainea (@razvancrainea) 30 23 385 136
+   2. Bogdan-Andrei Iancu (@bogdan-iancu) 144 86 3083 1807
+   3. Razvan Crainea (@razvancrainea) 32 25 397 142
    4. Ovidiu Sas (@ovidiusas) 27 19 615 167
-   5. Daniel-Constantin Mierla (@miconda) 24 19 174 165
-   6. Liviu Chircu (@liviuchircu) 24 15 246 371
-   7. Vlad Patrascu (@rvlad-patrascu) 19 9 360 354
-   8. Henning Westerholt (@henningw) 15 6 340 302
-   9. Dan Pascu (@danpascu) 10 8 22 36
+   5. Liviu Chircu (@liviuchircu) 26 17 248 373
+   6. Daniel-Constantin Mierla (@miconda) 24 19 174 165
+   7. Vlad Patrascu (@rvlad-patrascu) 23 13 382 366
+   8. Dan Pascu (@danpascu) 19 13 161 200
+   9. Henning Westerholt (@henningw) 15 6 340 302
    10. Saúl Ibarra Corretgé (@saghul) 8 6 36 11
 
    All remaining contributors: Walter Doekes (@wdoekes), Edson
@@ -1047,26 +1062,26 @@ Chapter 3. Contributors
 
    Table 3.2. Most recently active contributors^(1) to this module
                       Name                   Commit Activity
-   1.  Razvan Crainea (@razvancrainea)     Sep 2011 - Jun 2019
-   2.  Bogdan-Andrei Iancu (@bogdan-iancu) Oct 2006 - Jun 2019
-   3.  Dan Pascu (@danpascu)               Nov 2007 - May 2019
-   4.  Liviu Chircu (@liviuchircu)         Mar 2014 - May 2019
-   5.  Vlad Patrascu (@rvlad-patrascu)     May 2017 - Apr 2019
-   6.  Peter Lemenkov (@lemenkov)          Jun 2018 - Jun 2018
-   7.  James Criscuolo                     Mar 2016 - Mar 2016
-   8.  Ovidiu Sas (@ovidiusas)             Sep 2010 - Mar 2016
-   9.  Julián Moreno Patiño                Feb 2016 - Feb 2016
-   10. Dusan Klinec                        Dec 2015 - Dec 2015
+   1.  Liviu Chircu (@liviuchircu)         Mar 2014 - Jan 2020
+   2.  Bogdan-Andrei Iancu (@bogdan-iancu) Oct 2006 - Jan 2020
+   3.  Vlad Patrascu (@rvlad-patrascu)     May 2017 - Dec 2019
+   4.  Walter Doekes (@wdoekes)            Apr 2010 - Nov 2019
+   5.  Razvan Crainea (@razvancrainea)     Sep 2011 - Sep 2019
+   6.  Dan Pascu (@danpascu)               Nov 2007 - Jul 2019
+   7.  Peter Lemenkov (@lemenkov)          Jun 2018 - Jun 2018
+   8.  James Criscuolo                     Mar 2016 - Mar 2016
+   9.  Ovidiu Sas (@ovidiusas)             Sep 2010 - Mar 2016
+   10. Julián Moreno Patiño                Feb 2016 - Feb 2016
 
-   All remaining contributors: Carlos Oliva, Damien Sandras
-   (@dsandras), Vlad Paiu (@vladpaiu), Saúl Ibarra Corretgé
-   (@saghul), Anca Vamanu, Walter Doekes (@wdoekes), Vallimamod
-   Abdullah, Kennard White, Stanislaw Pitucha, Angel Marin, John
-   Riordan, Vasil Kolev, UnixDev, Sergio Gutierrez, Kobi Eshun
-   (@ekobi), Klaus Darilion, Denis Bilenko, Henning Westerholt
-   (@henningw), Juha Heinanen (@juha-h), Daniel-Constantin Mierla
-   (@miconda), Edson Gellert Schubert, Julien Blache, Benny
-   Prijono, Elena-Ramona Modroiu.
+   All remaining contributors: Dusan Klinec, Carlos Oliva, Damien
+   Sandras (@dsandras), Vlad Paiu (@vladpaiu), Saúl Ibarra
+   Corretgé (@saghul), Anca Vamanu, Vallimamod Abdullah, Kennard
+   White, Stanislaw Pitucha, Angel Marin, John Riordan, Vasil
+   Kolev, UnixDev, Sergio Gutierrez, Kobi Eshun (@ekobi), Klaus
+   Darilion, Denis Bilenko, Henning Westerholt (@henningw), Juha
+   Heinanen (@juha-h), Daniel-Constantin Mierla (@miconda), Edson
+   Gellert Schubert, Julien Blache, Benny Prijono, Elena-Ramona
+   Modroiu.
 
    (1) including any documentation-related commits, excluding
    merge commits
@@ -1075,14 +1090,15 @@ Chapter 4. Documentation
 
 4.1. Contributors
 
-   Last edited by: Liviu Chircu (@liviuchircu), Vlad Patrascu
+   Last edited by: Walter Doekes (@wdoekes), Dan Pascu
+   (@danpascu), Liviu Chircu (@liviuchircu), Vlad Patrascu
    (@rvlad-patrascu), Bogdan-Andrei Iancu (@bogdan-iancu), Razvan
    Crainea (@razvancrainea), Peter Lemenkov (@lemenkov), Saúl
    Ibarra Corretgé (@saghul), Ovidiu Sas (@ovidiusas), Anca
    Vamanu, Kennard White, Angel Marin, Kobi Eshun (@ekobi), Klaus
-   Darilion, Henning Westerholt (@henningw), Dan Pascu
-   (@danpascu), Daniel-Constantin Mierla (@miconda), Edson Gellert
-   Schubert, Juha Heinanen (@juha-h), Elena-Ramona Modroiu.
+   Darilion, Henning Westerholt (@henningw), Daniel-Constantin
+   Mierla (@miconda), Edson Gellert Schubert, Juha Heinanen
+   (@juha-h), Elena-Ramona Modroiu.
 
    Documentation Copyrights:
 

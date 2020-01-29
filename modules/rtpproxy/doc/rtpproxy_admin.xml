@@ -578,8 +578,19 @@ modparam("rtpproxy", "rtpp_notify_socket", "/tmp/rtpproxy.unix")
 				message is received, support symmetric RTP must be forced.
 				</para></listitem>
 				<listitem><para>
-				<emphasis>n</emphasis> - flags that enables the notification
-				timeout for the session.
+				<emphasis>n[&lt;SOCKET&gt;]</emphasis> - flags that enables
+				the notification timeout for the session. One can specify an
+				optiona "advertised" socket between the &lt; and &gt; tags.
+				If the socket is not specified, the value of
+				<emphasis>rtpp_notify_socket</emphasis> is used.
+				</para></listitem>
+				<listitem><para>
+				<emphasis>d[NNN]</emphasis> - enables DTMF notifications for this
+				call. One can optionally specify the payload type that DTMF will
+				be used for this call - it it is not specified, RTPProxy uses the
+				<emphasis>101</emphasis> pt. <emphasis>NOTE:</emphasis> this feature
+				is currently only available in the RTPProxy
+				<emphasis>rtpp_2_1_dtmf</emphasis> branch.
 				</para></listitem>
 				<listitem><para>
 				<emphasis>tNN</emphasis> - can be used to specify a RTP
@@ -1141,6 +1152,44 @@ $ opensips-cli -x mi rtpproxy_reload
 				<emphasis>status</emphasis> - <emphasis>active</emphasis> if
 				the RTPProxy instance responds to probing or
 				<emphasis>inactive</emphasis> if the instance was deactivated.
+			</para></listitem>
+		</itemizedlist>
+	</section>
+	<section id="event_E_RTPPROXY_DTMF" xreflabel="E_RTPPROXY_DTMF">
+		<title>
+		<function moreinfo="none">E_RTPPROXY_DTMF</function>
+		</title>
+		<para>
+			This event is raised when a RTPProxy server sends a DTMF
+			notification to OpenSIPS. In order to catch RFC 2833/4733
+			DTMF events, you need to provide the <emphasis>d</emphasis>
+			flag to <emphasis>rtpproxy_offer()</emphasis>/
+			<emphasis>rtpproxy_answer()</emphasis>.
+		</para>
+		<para>Parameters:</para>
+		<itemizedlist>
+			<listitem><para>
+				<emphasis>digit</emphasis> - the digit pressed.
+			</para></listitem>
+			<listitem><para>
+				<emphasis>duration</emphasis> - the duration of the event.
+			</para></listitem>
+			<listitem><para>
+				<emphasis>volume</emphasis> - the volume of the event.
+			</para></listitem>
+			<listitem><para>
+				<emphasis>id</emphasis> - represents the identifier of
+				the call for which that event was received.
+			</para></listitem>
+			<listitem><para>
+				<emphasis>is_callid</emphasis> - is <emphasis>0</emphasis>
+				if the <emphasis>id</emphasis> parameter represents the
+				Dialog ID, or <emphasis>1</emphasis> if it is a callid.
+			</para></listitem>
+			<listitem><para>
+				<emphasis>stream</emphasis> - indicates the stream index
+				of the RTPProxy session. It is normally 0 if the caller
+				sent the DTMF, or 1 if the callee sent it.
 			</para></listitem>
 		</itemizedlist>
 	</section>

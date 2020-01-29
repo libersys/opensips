@@ -78,7 +78,7 @@ static cmd_export_t cmds[] = {
 	{"add_isup_part", (cmd_function)add_isup_part_cmd, {
 		{CMD_PARAM_STR|CMD_PARAM_OPT,0,0},
 		{CMD_PARAM_STR|CMD_PARAM_OPT,0,0}, {0,0,0}},
-		ONREPLY_ROUTE | LOCAL_ROUTE | BRANCH_ROUTE},
+		REQUEST_ROUTE|FAILURE_ROUTE|ONREPLY_ROUTE|LOCAL_ROUTE|BRANCH_ROUTE},
 	{0,0,{{0,0,0}},0}
 };
 
@@ -110,6 +110,7 @@ struct module_exports exports= {
 	mod_items,       	/* exported pseudo-variables */
 	trans,					/* exported transformations */
 	0,               	/* extra processes */
+	0,               	/* module pre-initialization function */
 	mod_init,        	/* module initialization function */
 	0,               	/* reply processing function */
 	mod_destroy,
