@@ -107,7 +107,8 @@ int jwt_authorize(struct sip_msg* _msg, str* jwt_token,
 		p+=n;
 	}
 	
-	n = snprintf(p,len," from %.*s a inner join %.*s b on a.%.*s = b.%.*s  where a.%.*s=\"%.*s\" and UNIX_TIMESTAMP() >= b.%.*s and UNIX_TIMESTAMP() < b.%.*s",
+	//n = snprintf(p,len," from %.*s a inner join %.*s b on a.%.*s = b.%.*s  where a.%.*s=\"%.*s\" and UNIX_TIMESTAMP() >= b.%.*s and UNIX_TIMESTAMP() < b.%.*s",
+	n = snprintf(p,len," from %.*s a inner join %.*s b on a.%.*s = b.%.*s  where a.%.*s='%.*s' and date_part('epoch',CURRENT_TIMESTAMP)::int >= b.%.*s and date_part('epoch',CURRENT_TIMESTAMP)::int < b.%.*s",
 	profiles_table.len,profiles_table.s,
 	secrets_table.len,secrets_table.s,	
 	tag_column.len,tag_column.s,
